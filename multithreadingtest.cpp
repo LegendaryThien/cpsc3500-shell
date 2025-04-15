@@ -27,5 +27,5 @@ int main() {
 } 
 
 /*
- it doesn't mean that all other threads have stopped running. In your code, you've created 10 threads using pthread_create, but you've removed the pthread_join calls, which means the main thread doesn't wait for these threads to finish before exiting.
+ it doesn't mean that all other threads have stopped running. In your code, you've created 10 threads using pthread_create, but you've removed the pthread_join calls, which means the main thread doesn't wait for these threads to finish before exiting. Pthread_join waits for threads to finish executing before exiting.
 */
