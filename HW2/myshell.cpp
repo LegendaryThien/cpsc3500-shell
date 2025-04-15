@@ -33,8 +33,12 @@ struct Command {
 };
 
 // Function to parse the command line into a command
-void parseCommand(char* commandLine, Command& command) {
-
+void parse(char* commandLine, Command& command) {
+    // Remove trailing newline if present
+    size_t len = strlen(commandLine);
+    if (len > 0 && commandLine[len-1] == '\n') {
+        commandLine[len-1] = '\0';
+    }
     
     // Parse this command into arguments
     command.argCount = 0;
@@ -53,7 +57,7 @@ void parseCommand(char* commandLine, Command& command) {
 }
 
 // Function to execute a command
-void executeCommand(Command& command) {
+void execute(Command& command) {
     if (command.argCount == 0) return;
     
     // Create a new process to execute the command
@@ -71,9 +75,6 @@ void executeCommand(Command& command) {
         exit(1);
     } else { // parent process
     
-        // Print the parent process PID and the child process PID
-        std::cout << "Parent process PID: " << getpid() << ", Child process PID: " << pid << std::endl;
-
         // Wait for the child process to complete
         int status;
         wait(&status);
@@ -103,23 +104,13 @@ int main() {
         
         // Read command from stdin
         fgets(commandLine, sizeof(commandLine), stdin); // removing causes segfault
-
-        // Remove trailing newline if present
-        size_t len = strlen(commandLine);
-        if (len > 0 && commandLine[len-1] == '\n') {
-            commandLine[len-1] = '\0';
-        }
         
         // Parse the command line
-        parseCommand(commandLine, command);
+        parse(commandLine, command);
 
-        // Check for exit command
+        // Execute the command if there are arguments
         if (command.argCount > 0) {
-            if (strcmp(command.args[0], "exit") == 0) {
-                break;
-            }
-            // Execute the command
-            executeCommand(command);
+            execute(command);
         }
         
     }
