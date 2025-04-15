@@ -21,7 +21,7 @@ exit - Exit the shell
 #include <string>
 
 // Maximum number of tokens (arguments) a command can have
-#define MAX_TOKENS 20
+const int MAX_TOKENS = 20;
 
 // Structure to hold a command and its arguments
 struct Command {
@@ -34,24 +34,20 @@ struct Command {
 
 // Function to parse the command line into a command
 void parseCommand(char* commandLine, Command& command) {
-    // Trim leading/trailing whitespace from the command
-    while (*commandLine == ' ') commandLine++;
-    char* end = commandLine + strlen(commandLine) - 1;
-    while (end > commandLine && *end == ' ') {
-        *end = '\0';
-        end--;
-    }
+
     
     // Parse this command into arguments
     command.argCount = 0;
+    
     // Split the command by spaces to get individual arguments
     char* token = strtok(commandLine, " ");
     
     // Store each argument in the command structure
-    while (token != nullptr && command.argCount < MAX_TOKENS) {
+    while (command.argCount < MAX_TOKENS) {
         command.args[command.argCount++] = token;
-        token = strtok(nullptr, " ");
+        token = strtok(nullptr, " "); // Get the next token
     }
+    
     // Set the last argument to NULL (required by execvp)
     command.args[command.argCount] = nullptr;
 }
@@ -67,22 +63,24 @@ void executeCommand(Command& command) {
         // Fork failed
         std::cerr << "Fork failed" << std::endl;
         return;
-    } else if (pid == 0) {
-        // Child process
+    } if (pid == 0) { // child process
         // Replace the child process with the new program
         execvp(command.args[0], command.args);
         // If execvp returns, it means the command was not found
         std::cerr << "Command not found: " << command.args[0] << std::endl;
         exit(1);
-    } else {
-        // Parent process
+    } else { // parent process
+    
+        // Print the parent process PID and the child process PID
+        std::cout << "Parent process PID: " << getpid() << ", Child process PID: " << pid << std::endl;
+
         // Wait for the child process to complete
         int status;
         wait(&status);
         
         // Check if the child process exited normally
         if (WIFEXITED(status)) {
-            std::cout << "process " << pid << " exits with exit status value " 
+            std::cout << "Child process " << pid << " exits with exit status value " 
                       << WEXITSTATUS(status) << std::endl;
         }
     }
@@ -94,6 +92,9 @@ int main() {
     // Command structure to store parsed command
     Command command;
     
+    // Print the shell's PID
+    std::cout << "Shell (Parent) PID: " << getpid() << std::endl;
+    
     // Main shell loop
     while (true) {
         // Display the shell prompt
@@ -101,26 +102,26 @@ int main() {
         std::cout.flush();
         
         // Read command from stdin
-        if (fgets(commandLine, sizeof(commandLine), stdin) != nullptr) {
-            // Remove trailing newline if present
-            size_t len = strlen(commandLine);
-            if (len > 0 && commandLine[len-1] == '\n') {
-                commandLine[len-1] = '\0';
-            }
-            
-            // Parse the command line
-            parseCommand(commandLine, command);
-            
-            if (command.argCount > 0) {
-                // Check for exit command
-                if (strcmp(command.args[0], "exit") == 0) {
-                    break;
-                }
-                
-                // Execute the command
-                executeCommand(command);
-            }
+        fgets(commandLine, sizeof(commandLine), stdin); // removing causes segfault
+
+        // Remove trailing newline if present
+        size_t len = strlen(commandLine);
+        if (len > 0 && commandLine[len-1] == '\n') {
+            commandLine[len-1] = '\0';
         }
+        
+        // Parse the command line
+        parseCommand(commandLine, command);
+
+        // Check for exit command
+        if (command.argCount > 0) {
+            if (strcmp(command.args[0], "exit") == 0) {
+                break;
+            }
+            // Execute the command
+            executeCommand(command);
+        }
+        
     }
     
     return 0;
