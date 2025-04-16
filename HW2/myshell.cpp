@@ -4,29 +4,24 @@
 #include <sys/wait.h>
 #include <vector>
 #include <string>
+#include <algorithm>  // for std::fill
 
-#define NUM 20      // Maximum number of tokens per command
-#define SZ 500      // Size of buffer for each command
+#define MAX_TOKENS 20      // Maximum MAX_TOKENSber of tokens per command
 #define MAX_COMMANDS 10
 
-// Command storage implementation:
-// Instead of using a 2D array of pointers, we use a contiguous buffer approach:
-// - buf[MAX_COMMANDS][SZ]: A 2D char array where each row holds tokens for one command
-//   Tokens are stored contiguously with null terminators between them
-// - tokenCounts[MAX_COMMANDS]: Tracks number of tokens in each command
-// This approach is more memory efficient than a 2D array of pointers because:
-// 1. Avoids memory fragmentation
-// 2. Simpler memory management
-// 3. Better cache performance due to contiguous storage
-char buf[MAX_COMMANDS][SZ];
+// Command storage implementation using 2D array approach:
+// - commands[MAX_COMMANDS][MAX_TOKENS]: 2D array of pointers to store tokens
+// - tokenCounts[MAX_COMMANDS]: Tracks MAX_TOKENSber of tokens in each command
+char* commands[MAX_COMMANDS][MAX_TOKENS];
 int tokenCounts[MAX_COMMANDS];
 
-void parseWithPipes(char* commandLine, int& cmdCount) {
-    // Initialize token counts and buffers
-    memset(tokenCounts, 0, sizeof(tokenCounts));
-    memset(buf, 0, sizeof(buf));
+void parse(char* commandLine, int& cmdCount) {
+    // Initialize token counts
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        tokenCounts[i] = 0;
+    }
     
-    // Count the number of pipe characters to determine how many commands we have
+    // Count the MAX_TOKENSber of pipe characters to determine how many commands we have
     int pipeCount = 0;
     for (int i = 0; commandLine[i] != '\0'; i++) {
         if (commandLine[i] == '|') {
@@ -34,7 +29,7 @@ void parseWithPipes(char* commandLine, int& cmdCount) {
         }
     }
     
-    // The number of commands is the number of pipes plus 1
+    // The MAX_TOKENSber of commands is the MAX_TOKENSber of pipes plus 1
     cmdCount = pipeCount + 1;
     
     // Split the command line by pipe character
@@ -53,15 +48,10 @@ void parseWithPipes(char* commandLine, int& cmdCount) {
         
         // Parse this command into tokens
         char* token = strtok(cmd, " ");
-        int pos = 0;  // Position in the buffer
         
-        while (token != nullptr && tokenCounts[currentCmd] < NUM && pos < SZ - 1) {
-            // Copy token to buffer
-            int len = strlen(token);
-            if (pos + len + 1 >= SZ) break;  // Ensure we don't overflow
-            
-            strcpy(&buf[currentCmd][pos], token);
-            pos += len + 1;  // Move position past token and null terminator
+        while (token != nullptr && tokenCounts[currentCmd] < MAX_TOKENS) {
+            // Allocate memory for token and copy it
+            commands[currentCmd][tokenCounts[currentCmd]] = strdup(token);
             tokenCounts[currentCmd]++;
             token = strtok(nullptr, " ");
         }
@@ -72,7 +62,7 @@ void parseWithPipes(char* commandLine, int& cmdCount) {
     }
 }
 
-void executePipes(int cmdCount) {
+void execute(int cmdCount) {
     if (cmdCount == 0) return;
     
     if (cmdCount == 1) {
@@ -83,13 +73,11 @@ void executePipes(int cmdCount) {
             return;
         } else if (pid == 0) {
             // Create array of pointers for execvp
-            char* args[NUM + 1];
-            int pos = 0;
+            char* args[MAX_TOKENS + 1];
             
-            // Pack tokens into argument list
+            // Copy pointers to argument list
             for (int i = 0; i < tokenCounts[0]; i++) {
-                args[i] = &buf[0][pos];
-                pos += strlen(args[i]) + 1;  // Point to next token
+                args[i] = commands[0][i];
             }
             args[tokenCounts[0]] = nullptr;  // Null terminate the argument list
             
@@ -139,13 +127,11 @@ void executePipes(int cmdCount) {
                 }
                 
                 // Create array of pointers for execvp
-                char* args[NUM + 1];
-                int pos = 0;
+                char* args[MAX_TOKENS + 1];
                 
-                // Pack tokens into argument list
+                // Copy pointers to argument list
                 for (int j = 0; j < tokenCounts[i]; j++) {
-                    args[j] = &buf[i][pos];
-                    pos += strlen(args[j]) + 1;  // Point to next token
+                    args[j] = commands[i][j];
                 }
                 args[tokenCounts[i]] = nullptr;  // Null terminate the argument list
                 
@@ -200,24 +186,29 @@ int main() {
         }
         
         if (strchr(commandLine, '|') != nullptr) {
-            parseWithPipes(commandLine, cmdCount);
+            parse(commandLine, cmdCount);
             if (cmdCount > 0) {
-                executePipes(cmdCount);
+                execute(cmdCount);
             }
         } else {
             // Handle single command case
             char* token = strtok(commandLine, " ");
-            int pos = 0;
             tokenCounts[0] = 0;
             
-            while (token != nullptr && tokenCounts[0] < NUM && pos < SZ - 1) {
-                strcpy(&buf[0][pos], token);
-                pos += strlen(token) + 1;
+            while (token != nullptr && tokenCounts[0] < MAX_TOKENS) {
+                commands[0][tokenCounts[0]] = strdup(token);
                 tokenCounts[0]++;
                 token = strtok(nullptr, " ");
             }
             
-            executePipes(1);
+            execute(1);
+        }
+        
+        // Free allocated memory
+        for (int i = 0; i < cmdCount; i++) {
+            for (int j = 0; j < tokenCounts[i]; j++) {
+                free(commands[i][j]);
+            }
         }
     }
     
