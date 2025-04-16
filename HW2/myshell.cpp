@@ -5,16 +5,27 @@
 #include <vector>
 #include <string>
 
-#define MAX_TOKENS 20
+#define NUM 20      // Maximum number of tokens per command
+#define SZ 500      // Size of buffer for each command
 #define MAX_COMMANDS 10
-#define MAX_TOKEN_LENGTH 20
 
-struct Command {
-    char* cmds[MAX_TOKENS + 1];
-    int cmdCount;
-};
+// Command storage implementation:
+// Instead of using a 2D array of pointers, we use a contiguous buffer approach:
+// - buf[MAX_COMMANDS][SZ]: A 2D char array where each row holds tokens for one command
+//   Tokens are stored contiguously with null terminators between them
+// - tokenCounts[MAX_COMMANDS]: Tracks number of tokens in each command
+// This approach is more memory efficient than a 2D array of pointers because:
+// 1. Avoids memory fragmentation
+// 2. Simpler memory management
+// 3. Better cache performance due to contiguous storage
+char buf[MAX_COMMANDS][SZ];
+int tokenCounts[MAX_COMMANDS];
 
-void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
+void parseWithPipes(char* commandLine, int& cmdCount) {
+    // Initialize token counts and buffers
+    memset(tokenCounts, 0, sizeof(tokenCounts));
+    memset(buf, 0, sizeof(buf));
+    
     // Count the number of pipe characters to determine how many commands we have
     int pipeCount = 0;
     for (int i = 0; commandLine[i] != '\0'; i++) {
@@ -40,36 +51,20 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
             end--;
         }
         
-        // Parse this command into arguments
-        commands[currentCmd].cmdCount = 0;
+        // Parse this command into tokens
+        char* token = strtok(cmd, " ");
+        int pos = 0;  // Position in the buffer
         
-        // Make a copy of the command to avoid modifying the original
-        char cmdCopy[1024];
-        strcpy(cmdCopy, cmd);
-        
-        char* saveptr2;
-        char* token = strtok_r(cmdCopy, " ", &saveptr2);
-        
-        while (token != nullptr && commands[currentCmd].cmdCount < MAX_TOKENS) {
-            // Check token length
-            if (strlen(token) > MAX_TOKEN_LENGTH) {
-                std::cerr << "Error: Token length exceeds " << MAX_TOKEN_LENGTH << " characters: " << token << std::endl;
-                return;
-            }
+        while (token != nullptr && tokenCounts[currentCmd] < NUM && pos < SZ - 1) {
+            // Copy token to buffer
+            int len = strlen(token);
+            if (pos + len + 1 >= SZ) break;  // Ensure we don't overflow
             
-            // Allocate memory for the token and copy it
-            commands[currentCmd].cmds[commands[currentCmd].cmdCount] = strdup(token);
-            commands[currentCmd].cmdCount++;
-            token = strtok_r(nullptr, " ", &saveptr2);
+            strcpy(&buf[currentCmd][pos], token);
+            pos += len + 1;  // Move position past token and null terminator
+            tokenCounts[currentCmd]++;
+            token = strtok(nullptr, " ");
         }
-        
-        if (commands[currentCmd].cmdCount >= MAX_TOKENS && token != nullptr) {
-            std::cerr << "Error: Too many tokens in command (max " << MAX_TOKENS << ")" << std::endl;
-            return;
-        }
-        
-        // Set the last argument to NULL (required by execvp)
-        commands[currentCmd].cmds[commands[currentCmd].cmdCount] = nullptr;
         
         // Get the next command
         cmd = strtok_r(nullptr, "|", &saveptr);
@@ -77,27 +72,40 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
     }
 }
 
-void executePipes(Command commands[], int cmdCount) {
+void executePipes(int cmdCount) {
     if (cmdCount == 0) return;
     
     if (cmdCount == 1) {
         pid_t pid = fork();
         
         if (pid < 0) {
+            perror("fork failed");
             return;
         } else if (pid == 0) {
-            execvp(commands[0].cmds[0], commands[0].cmds);
+            // Create array of pointers for execvp
+            char* args[NUM + 1];
+            int pos = 0;
+            
+            // Pack tokens into argument list
+            for (int i = 0; i < tokenCounts[0]; i++) {
+                args[i] = &buf[0][pos];
+                pos += strlen(args[i]) + 1;  // Point to next token
+            }
+            args[tokenCounts[0]] = nullptr;  // Null terminate the argument list
+            
+            execvp(args[0], args);
+            perror("execvp failed");
             exit(1);
-        } else { 
+        } else {
             int status;
             wait(&status);
         }
-
     } else {
         int** pipes = new int*[cmdCount - 1];
         for (int i = 0; i < cmdCount - 1; i++) {
             pipes[i] = new int[2];
             if (pipe(pipes[i]) == -1) {
+                perror("pipe creation failed");
                 return;
             }
         }
@@ -106,8 +114,10 @@ void executePipes(Command commands[], int cmdCount) {
             pid_t pid = fork();
             
             if (pid < 0) {
+                perror("fork failed");
                 return;
             } else if (pid == 0) {
+                // Set up pipes for this command
                 if (i > 0) {
                     close(0);
                     dup(pipes[i-1][0]);
@@ -120,7 +130,27 @@ void executePipes(Command commands[], int cmdCount) {
                     close(pipes[i][0]);
                 }
                 
-                execvp(commands[i].cmds[0], commands[i].cmds);
+                // Close all other pipe ends
+                for (int j = 0; j < cmdCount - 1; j++) {
+                    if (j != i-1 && j != i) {
+                        close(pipes[j][0]);
+                        close(pipes[j][1]);
+                    }
+                }
+                
+                // Create array of pointers for execvp
+                char* args[NUM + 1];
+                int pos = 0;
+                
+                // Pack tokens into argument list
+                for (int j = 0; j < tokenCounts[i]; j++) {
+                    args[j] = &buf[i][pos];
+                    pos += strlen(args[j]) + 1;  // Point to next token
+                }
+                args[tokenCounts[i]] = nullptr;  // Null terminate the argument list
+                
+                execvp(args[0], args);
+                perror("execvp failed");
                 exit(1);
             } else {
                 if (i > 0) {
@@ -132,11 +162,13 @@ void executePipes(Command commands[], int cmdCount) {
             }
         }
         
+        // Wait for all child processes to complete
         for (int i = 0; i < cmdCount; i++) {
             int status;
             wait(&status);
         }
         
+        // Clean up pipes
         for (int i = 0; i < cmdCount - 1; i++) {
             delete[] pipes[i];
         }
@@ -144,59 +176,12 @@ void executePipes(Command commands[], int cmdCount) {
     }
 }
 
-void parseSingle(char* commandLine, Command& command) {
-    command.cmdCount = 0;
-    
-    // Skip leading whitespace
-    while (*commandLine == ' ') commandLine++;
-    
-    // Split the command by spaces to get individual arguments
-    char* token = strtok(commandLine, " ");
-    
-    // Store each argument in the command structure
-    while (token != nullptr && command.cmdCount < MAX_TOKENS) {
-        // Check token length
-        if (strlen(token) > MAX_TOKEN_LENGTH) {
-            std::cerr << "Error: Token length exceeds " << MAX_TOKEN_LENGTH << " characters: " << token << std::endl;
-            return;
-        }
-        
-        command.cmds[command.cmdCount++] = token;
-        token = strtok(nullptr, " "); // Get the next token
-    }
-    
-    if (command.cmdCount >= MAX_TOKENS && token != nullptr) {
-        std::cerr << "Error: Too many tokens in command (max " << MAX_TOKENS << ")" << std::endl;
-        return;
-    }
-    
-    // Set the last argument to NULL (required by execvp)
-    command.cmds[command.cmdCount] = nullptr;
-}
-
-void executeSingle(Command& command) {
-    if (command.cmdCount > 0) {
-        pid_t pid = fork();
-        
-        if (pid < 0) {
-            return;
-        } else if (pid == 0) {
-            execvp(command.cmds[0], command.cmds);
-            exit(1);
-        } else {
-            int status;
-            wait(&status);
-        }
-    }
-}
-
 int main() {
     char commandLine[1024];
-    Command commands[MAX_COMMANDS];
     int cmdCount;
     
     while (true) {
-        std::cout << "myshell$";
+        std::cout << "myshell$ ";
         
         if (fgets(commandLine, sizeof(commandLine), stdin) == nullptr) {
             std::cout << std::endl;
@@ -215,14 +200,24 @@ int main() {
         }
         
         if (strchr(commandLine, '|') != nullptr) {
-            parseWithPipes(commandLine, commands, cmdCount);
+            parseWithPipes(commandLine, cmdCount);
             if (cmdCount > 0) {
-                executePipes(commands, cmdCount);
+                executePipes(cmdCount);
             }
         } else {
-            Command command;
-            parseSingle(commandLine, command);
-            executeSingle(command);
+            // Handle single command case
+            char* token = strtok(commandLine, " ");
+            int pos = 0;
+            tokenCounts[0] = 0;
+            
+            while (token != nullptr && tokenCounts[0] < NUM && pos < SZ - 1) {
+                strcpy(&buf[0][pos], token);
+                pos += strlen(token) + 1;
+                tokenCounts[0]++;
+                token = strtok(nullptr, " ");
+            }
+            
+            executePipes(1);
         }
     }
     
