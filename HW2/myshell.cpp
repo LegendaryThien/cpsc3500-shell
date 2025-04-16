@@ -5,21 +5,15 @@
 #include <vector>
 #include <string>
 
-// Maximum number of tokens (arguments) a command can have
 #define MAX_TOKENS 20
 #define MAX_COMMANDS 10
 #define MAX_TOKEN_LENGTH 20
 
-// Structure to hold a command and its arguments
 struct Command {
-    // Array of pointers to command arguments (including the command itself)
-    // The last element must be NULL for execvp to work properly
     char* cmds[MAX_TOKENS + 1];
-    // Number of arguments in this command
     int cmdCount;
 };
 
-// Function to parse a command line with pipes
 void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
     // Count the number of pipe characters to determine how many commands we have
     int pipeCount = 0;
@@ -83,28 +77,23 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
     }
 }
 
-// Function to execute piped commands
 void executePipes(Command commands[], int cmdCount) {
     if (cmdCount == 0) return;
     
-    // If there's only one command, execute it normally
     if (cmdCount == 1) {
-        // Create a new process to execute the command
         pid_t pid = fork();
         
         if (pid < 0) {
             return;
-        } else if (pid == 0) { // child process
-            // Replace the child process with the new program
+        } else if (pid == 0) {
             execvp(commands[0].cmds[0], commands[0].cmds);
             exit(1);
-        } else { // parent process
-            // Wait for the child process to complete
+        } else { 
             int status;
             wait(&status);
         }
+
     } else {
-        // Create pipes for communication between processes
         int** pipes = new int*[cmdCount - 1];
         for (int i = 0; i < cmdCount - 1; i++) {
             pipes[i] = new int[2];
@@ -113,33 +102,27 @@ void executePipes(Command commands[], int cmdCount) {
             }
         }
         
-        // Create child processes for each command
         for (int i = 0; i < cmdCount; i++) {
             pid_t pid = fork();
             
             if (pid < 0) {
                 return;
-            } else if (pid == 0) { // Child process
-                // Set up pipes for this child
-                if (i > 0) { // Not the first command
-                    // Read from the previous pipe
+            } else if (pid == 0) {
+                if (i > 0) {
                     close(0);
                     dup(pipes[i-1][0]);
                     close(pipes[i-1][1]);
                 }
                 
-                if (i < cmdCount - 1) { // Not the last command
-                    // Write to the next pipe
+                if (i < cmdCount - 1) {
                     close(1);
                     dup(pipes[i][1]);
                     close(pipes[i][0]);
                 }
                 
-                // Execute the command
                 execvp(commands[i].cmds[0], commands[i].cmds);
                 exit(1);
-            } else { // Parent process
-                // Close the pipes that the parent doesn't need
+            } else {
                 if (i > 0) {
                     close(pipes[i-1][0]);
                 }
@@ -149,13 +132,11 @@ void executePipes(Command commands[], int cmdCount) {
             }
         }
         
-        // Wait for all child processes to complete
         for (int i = 0; i < cmdCount; i++) {
             int status;
             wait(&status);
         }
         
-        // Clean up the pipes
         for (int i = 0; i < cmdCount - 1; i++) {
             delete[] pipes[i];
         }
@@ -163,7 +144,6 @@ void executePipes(Command commands[], int cmdCount) {
     }
 }
 
-// Function to parse a single command
 void parseSingle(char* commandLine, Command& command) {
     command.cmdCount = 0;
     
@@ -194,20 +174,16 @@ void parseSingle(char* commandLine, Command& command) {
     command.cmds[command.cmdCount] = nullptr;
 }
 
-// Function to execute a single command
 void executeSingle(Command& command) {
     if (command.cmdCount > 0) {
-        // Create a new process to execute the command
         pid_t pid = fork();
         
         if (pid < 0) {
             return;
-        } else if (pid == 0) { // child process
-            // Replace the child process with the new program
+        } else if (pid == 0) {
             execvp(command.cmds[0], command.cmds);
             exit(1);
-        } else { // parent process
-            // Wait for the child process to complete
+        } else {
             int status;
             wait(&status);
         }
@@ -215,20 +191,14 @@ void executeSingle(Command& command) {
 }
 
 int main() {
-    // Buffer to store the command line input
     char commandLine[1024];
-    // Array of commands for piped commands
     Command commands[MAX_COMMANDS];
     int cmdCount;
     
-    // Main shell loop
     while (true) {
-        // Display the shell prompt
         std::cout << "myshell$";
         
-        // Read command from stdin
         if (fgets(commandLine, sizeof(commandLine), stdin) == nullptr) {
-            // Handle EOF (Ctrl+D)
             std::cout << std::endl;
             break;
         }
@@ -244,15 +214,12 @@ int main() {
             continue;
         }
         
-        // Check if the command contains a pipe
         if (strchr(commandLine, '|') != nullptr) {
-            // Parse and execute piped commands
             parseWithPipes(commandLine, commands, cmdCount);
             if (cmdCount > 0) {
                 executePipes(commands, cmdCount);
             }
         } else {
-            // Parse and execute a single command
             Command command;
             parseSingle(commandLine, command);
             executeSingle(command);
