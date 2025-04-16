@@ -97,6 +97,9 @@ void execute(int cmdCount) {
         } else {
             int status;
             wait(&status);
+            if (WIFEXITED(status)) {
+                std::cout << "Process " << pid << " exited with status " << WEXITSTATUS(status) << std::endl;
+            }
         }
     } else {
         int** pipes = new int*[cmdCount - 1];
@@ -108,8 +111,11 @@ void execute(int cmdCount) {
             }
         }
         
+        pid_t pids[MAX_COMMANDS];  // Array to store all child process IDs
+        
         for (int i = 0; i < cmdCount; i++) {
             pid_t pid = fork();
+            pids[i] = pid;  // Store the process ID
             
             if (pid < 0) {
                 perror("fork failed");
@@ -161,7 +167,10 @@ void execute(int cmdCount) {
         // Wait for all child processes to complete
         for (int i = 0; i < cmdCount; i++) {
             int status;
-            wait(&status);
+            waitpid(pids[i], &status, 0);
+            if (WIFEXITED(status)) {
+                std::cout << "Process " << pids[i] << " exited with status " << WEXITSTATUS(status) << std::endl;
+            }
         }
         
         // Clean up pipes
