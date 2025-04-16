@@ -20,14 +20,10 @@ struct Command {
 
 // Function to parse a command line with pipes
 void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
-    // Make a copy of the command line to avoid modifying the original
-    char cmdLineCopy[1024];
-    strcpy(cmdLineCopy, commandLine);
-    
     // Count the number of pipe characters to determine how many commands we have
     int pipeCount = 0;
-    for (int i = 0; cmdLineCopy[i] != '\0'; i++) {
-        if (cmdLineCopy[i] == '|') {
+    for (int i = 0; commandLine[i] != '\0'; i++) {
+        if (commandLine[i] == '|') {
             pipeCount++;
         }
     }
@@ -37,7 +33,7 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
     
     // Split the command line by pipe character
     char* saveptr;
-    char* cmd = strtok_r(cmdLineCopy, "|", &saveptr);
+    char* cmd = strtok_r(commandLine, "|", &saveptr);
     int currentCmd = 0;
     
     while (cmd != nullptr && currentCmd < cmdCount) {
@@ -155,6 +151,43 @@ void executePipes(Command commands[], int cmdCount) {
     }
 }
 
+// Function to parse a single command
+void parseSingle(char* commandLine, Command& command) {
+    command.cmdCount = 0;
+    
+    // Split the command by spaces to get individual arguments
+    char* token = strtok(commandLine, " ");
+    
+    // Store each argument in the command structure
+    while (token != nullptr && command.cmdCount < MAX_TOKENS) {
+        command.cmds[command.cmdCount++] = token;
+        token = strtok(nullptr, " "); // Get the next token
+    }
+    
+    // Set the last argument to NULL (required by execvp)
+    command.cmds[command.cmdCount] = nullptr;
+}
+
+// Function to execute a single command
+void executeSingle(Command& command) {
+    if (command.cmdCount > 0) {
+        // Create a new process to execute the command
+        pid_t pid = fork();
+        
+        if (pid < 0) {
+            return;
+        } else if (pid == 0) { // child process
+            // Replace the child process with the new program
+            execvp(command.cmds[0], command.cmds);
+            exit(1);
+        } else { // parent process
+            // Wait for the child process to complete
+            int status;
+            wait(&status);
+        }
+    }
+}
+
 int main() {
     // Buffer to store the command line input
     char commandLine[1024];
@@ -166,7 +199,6 @@ int main() {
     while (true) {
         // Display the shell prompt
         std::cout << "myshell$";
-        std::cout.flush();
         
         // Read command from stdin
         if (fgets(commandLine, sizeof(commandLine), stdin) == nullptr) {
@@ -196,36 +228,8 @@ int main() {
         } else {
             // Parse and execute a single command
             Command command;
-            command.cmdCount = 0;
-            
-            // Split the command by spaces to get individual arguments
-            char* token = strtok(commandLine, " ");
-            
-            // Store each argument in the command structure
-            while (token != nullptr && command.cmdCount < MAX_TOKENS) {
-                command.cmds[command.cmdCount++] = token;
-                token = strtok(nullptr, " "); // Get the next token
-            }
-            
-            // Set the last argument to NULL (required by execvp)
-            command.cmds[command.cmdCount] = nullptr;
-            
-            if (command.cmdCount > 0) {
-                // Create a new process to execute the command
-                pid_t pid = fork();
-                
-                if (pid < 0) {
-                    continue;
-                } else if (pid == 0) { // child process
-                    // Replace the child process with the new program
-                    execvp(command.cmds[0], command.cmds);
-                    exit(1);
-                } else { // parent process
-                    // Wait for the child process to complete
-                    int status;
-                    wait(&status);
-                }
-            }
+            parseSingle(commandLine, command);
+            executeSingle(command);
         }
     }
     
