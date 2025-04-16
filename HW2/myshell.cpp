@@ -6,8 +6,9 @@
 #include <string>
 
 // Maximum number of tokens (arguments) a command can have
-const int MAX_TOKENS = 20;
-const int MAX_COMMANDS = 10;
+#define MAX_TOKENS 20
+#define MAX_COMMANDS 10
+#define MAX_TOKEN_LENGTH 20
 
 // Structure to hold a command and its arguments
 struct Command {
@@ -56,10 +57,21 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
         char* token = strtok_r(cmdCopy, " ", &saveptr2);
         
         while (token != nullptr && commands[currentCmd].cmdCount < MAX_TOKENS) {
+            // Check token length
+            if (strlen(token) > MAX_TOKEN_LENGTH) {
+                std::cerr << "Error: Token length exceeds " << MAX_TOKEN_LENGTH << " characters: " << token << std::endl;
+                return;
+            }
+            
             // Allocate memory for the token and copy it
             commands[currentCmd].cmds[commands[currentCmd].cmdCount] = strdup(token);
             commands[currentCmd].cmdCount++;
             token = strtok_r(nullptr, " ", &saveptr2);
+        }
+        
+        if (commands[currentCmd].cmdCount >= MAX_TOKENS && token != nullptr) {
+            std::cerr << "Error: Too many tokens in command (max " << MAX_TOKENS << ")" << std::endl;
+            return;
         }
         
         // Set the last argument to NULL (required by execvp)
@@ -155,13 +167,27 @@ void executePipes(Command commands[], int cmdCount) {
 void parseSingle(char* commandLine, Command& command) {
     command.cmdCount = 0;
     
+    // Skip leading whitespace
+    while (*commandLine == ' ') commandLine++;
+    
     // Split the command by spaces to get individual arguments
     char* token = strtok(commandLine, " ");
     
     // Store each argument in the command structure
     while (token != nullptr && command.cmdCount < MAX_TOKENS) {
+        // Check token length
+        if (strlen(token) > MAX_TOKEN_LENGTH) {
+            std::cerr << "Error: Token length exceeds " << MAX_TOKEN_LENGTH << " characters: " << token << std::endl;
+            return;
+        }
+        
         command.cmds[command.cmdCount++] = token;
         token = strtok(nullptr, " "); // Get the next token
+    }
+    
+    if (command.cmdCount >= MAX_TOKENS && token != nullptr) {
+        std::cerr << "Error: Too many tokens in command (max " << MAX_TOKENS << ")" << std::endl;
+        return;
     }
     
     // Set the last argument to NULL (required by execvp)
