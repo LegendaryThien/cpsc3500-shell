@@ -1,0 +1,12 @@
+Basic commands:
+ls - List files and directories
+pwd - Print working directory
+cd - Change directory
+echo - Print text
+cat - Display file contents
+grep - Search for patterns in files
+wc - Count lines, words, and characters
+ps - Display process information
+date - Show current date and time
+whoami - Show current user
+exit - Exit the shell
