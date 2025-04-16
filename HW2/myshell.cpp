@@ -59,19 +59,30 @@ void parse(char* commandLine, Command& command) {
 
 // Function to parse a command line with pipes
 void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
-    // Remove trailing newline if present
-    size_t len = strlen(commandLine);
-    if (len > 0 && commandLine[len-1] == '\n') {
-        commandLine[len-1] = '\0';
-    }
-    
     std::cout << "DEBUG: Parsing command line: " << commandLine << std::endl;
     
-    // Split the command line by pipe character
-    char* cmd = strtok(commandLine, "|");
-    cmdCount = 0;
+    // Make a copy of the command line to avoid modifying the original
+    char cmdLineCopy[1024];
+    strcpy(cmdLineCopy, commandLine);
     
-    while (cmd != nullptr && cmdCount < MAX_COMMANDS) {
+    // Count the number of pipe characters to determine how many commands we have
+    int pipeCount = 0;
+    for (int i = 0; cmdLineCopy[i] != '\0'; i++) {
+        if (cmdLineCopy[i] == '|') {
+            pipeCount++;
+        }
+    }
+    
+    // The number of commands is the number of pipes plus 1
+    cmdCount = pipeCount + 1;
+    std::cout << "DEBUG: Found " << pipeCount << " pipes, so " << cmdCount << " commands" << std::endl;
+    
+    // Split the command line by pipe character
+    char* saveptr;
+    char* cmd = strtok_r(cmdLineCopy, "|", &saveptr);
+    int currentCmd = 0;
+    
+    while (cmd != nullptr && currentCmd < cmdCount) {
         // Trim leading and trailing whitespace
         while (*cmd == ' ') cmd++;
         char* end = cmd + strlen(cmd) - 1;
@@ -80,27 +91,44 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
             end--;
         }
         
-        std::cout << "DEBUG: Processing command " << cmdCount << ": " << cmd << std::endl;
+        std::cout << "DEBUG: Processing command " << currentCmd << ": " << cmd << std::endl;
         
         // Parse this command into arguments
-        commands[cmdCount].cmdCount = 0;
-        char* token = strtok(cmd, " ");
+        commands[currentCmd].cmdCount = 0;
         
-        while (token != nullptr && commands[cmdCount].cmdCount < MAX_TOKENS) {
-            commands[cmdCount].cmds[commands[cmdCount].cmdCount++] = token;
+        // Make a copy of the command to avoid modifying the original
+        char cmdCopy[1024];
+        strcpy(cmdCopy, cmd);
+        
+        char* saveptr2;
+        char* token = strtok_r(cmdCopy, " ", &saveptr2);
+        
+        while (token != nullptr && commands[currentCmd].cmdCount < MAX_TOKENS) {
+            // Allocate memory for the token and copy it
+            commands[currentCmd].cmds[commands[currentCmd].cmdCount] = strdup(token);
             std::cout << "DEBUG: Added argument: " << token << std::endl;
-            token = strtok(nullptr, " ");
+            commands[currentCmd].cmdCount++;
+            token = strtok_r(nullptr, " ", &saveptr2);
         }
         
         // Set the last argument to NULL (required by execvp)
-        commands[cmdCount].cmds[commands[cmdCount].cmdCount] = nullptr;
+        commands[currentCmd].cmds[commands[currentCmd].cmdCount] = nullptr;
         
         // Get the next command
-        cmd = strtok(nullptr, "|");
-        cmdCount++;
+        cmd = strtok_r(nullptr, "|", &saveptr);
+        currentCmd++;
     }
     
     std::cout << "DEBUG: Total commands parsed: " << cmdCount << std::endl;
+    
+    // Debug output to verify all commands were parsed correctly
+    for (int i = 0; i < cmdCount; i++) {
+        std::cout << "DEBUG: Command " << i << " has " << commands[i].cmdCount << " arguments: ";
+        for (int j = 0; j < commands[i].cmdCount; j++) {
+            std::cout << commands[i].cmds[j] << " ";
+        }
+        std::cout << std::endl;
+    }
 }
 
 // Function to execute a command
@@ -139,6 +167,15 @@ void executePipes(Command commands[], int cmdCount) {
     if (cmdCount == 0) return;
     
     std::cout << "DEBUG: Executing " << cmdCount << " piped commands" << std::endl;
+    
+    // Debug output to verify commands before execution
+    for (int i = 0; i < cmdCount; i++) {
+        std::cout << "DEBUG: About to execute command " << i << ": ";
+        for (int j = 0; j < commands[i].cmdCount; j++) {
+            std::cout << commands[i].cmds[j] << " ";
+        }
+        std::cout << std::endl;
+    }
     
     // If there's only one command, execute it normally
     if (cmdCount == 1) {
@@ -200,7 +237,10 @@ void executePipes(Command commands[], int cmdCount) {
             std::cout << "DEBUG: Parent created child " << i << " with PID: " << pid << std::endl;
             // Close the pipes that the parent doesn't need
             if (i > 0) {
-                close(pipes[i-1][1]);
+                close(pipes[i-1][0]);
+            }
+            if (i < cmdCount - 1) {
+                close(pipes[i][1]);
             }
         }
     }
@@ -244,8 +284,20 @@ int main() {
             break;
         }
         
+        // Remove trailing newline if present
+        size_t len = strlen(commandLine);
+        if (len > 0 && commandLine[len-1] == '\n') {
+            commandLine[len-1] = '\0';
+        }
+        
+        // Skip empty commands
+        if (strlen(commandLine) == 0) {
+            continue;
+        }
+        
         // Check if the command contains a pipe
         if (strchr(commandLine, '|') != nullptr) {
+            std::cout << "DEBUG: Detected pipe in command: " << commandLine << std::endl;
             // Parse and execute piped commands
             parseWithPipes(commandLine, commands, cmdCount);
             if (cmdCount > 0) {
