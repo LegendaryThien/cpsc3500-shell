@@ -2,9 +2,6 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <vector>
-#include <string>
-#include <algorithm>  // for std::fill
 
 #define MAX_TOKENS 20      // Maximum MAX_TOKENSber of tokens per command
 #define MAX_COMMANDS 10
@@ -21,7 +18,7 @@ void parse(char* commandLine, int& cmdCount) {
         tokenCounts[i] = 0;
     }
     
-    // Count the MAX_TOKENSber of pipe characters to determine how many commands we have
+    // Count the number of pipe characters to determine how many commands we have
     int pipeCount = 0;
     for (int i = 0; commandLine[i] != '\0'; i++) {
         if (commandLine[i] == '|') {
@@ -29,36 +26,49 @@ void parse(char* commandLine, int& cmdCount) {
         }
     }
     
-    // The MAX_TOKENSber of commands is the MAX_TOKENSber of pipes plus 1
+    // The number of commands is the number of pipes plus 1
     cmdCount = pipeCount + 1;
     
-    // Split the command line by pipe character
-    char* saveptr;
-    char* cmd = strtok_r(commandLine, "|", &saveptr);
-    int currentCmd = 0;
+    // Split the command line by replacing | with null terminators
+    char* currentCmd = commandLine;
+    int currentCmdIndex = 0;
     
-    while (cmd != nullptr && currentCmd < cmdCount) {
-        // Trim leading and trailing whitespace
-        while (*cmd == ' ') cmd++;
-        char* end = cmd + strlen(cmd) - 1;
-        while (end > cmd && *end == ' ') {
-            *end = '\0';
-            end--;
+    while (currentCmdIndex < cmdCount) {
+        // Trim leading whitespace
+        while (*currentCmd == ' ') currentCmd++;
+        
+        // Find the next pipe or end of string
+        char* nextPipe = strchr(currentCmd, '|');
+        char* cmdEnd;
+        
+        if (nextPipe != nullptr) {
+            *nextPipe = '\0';  // Replace pipe with null terminator
+            cmdEnd = nextPipe - 1;
+        } else {
+            cmdEnd = currentCmd + strlen(currentCmd) - 1;
+        }
+        
+        // Trim trailing whitespace
+        while (cmdEnd > currentCmd && *cmdEnd == ' ') {
+            *cmdEnd = '\0';
+            cmdEnd--;
         }
         
         // Parse this command into tokens
-        char* token = strtok(cmd, " ");
+        char* token = strtok(currentCmd, " ");
         
-        while (token != nullptr && tokenCounts[currentCmd] < MAX_TOKENS) {
+        while (token != nullptr && tokenCounts[currentCmdIndex] < MAX_TOKENS) {
             // Allocate memory for token and copy it
-            commands[currentCmd][tokenCounts[currentCmd]] = strdup(token);
-            tokenCounts[currentCmd]++;
+            commands[currentCmdIndex][tokenCounts[currentCmdIndex]] = strdup(token);
+            tokenCounts[currentCmdIndex]++;
             token = strtok(nullptr, " ");
         }
         
-        // Get the next command
-        cmd = strtok_r(nullptr, "|", &saveptr);
-        currentCmd++;
+        // Move to next command
+        if (nextPipe != nullptr) {
+            currentCmd = nextPipe + 1;
+        }
+        currentCmdIndex++;
     }
 }
 
