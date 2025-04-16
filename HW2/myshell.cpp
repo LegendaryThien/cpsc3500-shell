@@ -65,6 +65,8 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
         commandLine[len-1] = '\0';
     }
     
+    std::cout << "DEBUG: Parsing command line: " << commandLine << std::endl;
+    
     // Split the command line by pipe character
     char* cmd = strtok(commandLine, "|");
     cmdCount = 0;
@@ -78,12 +80,15 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
             end--;
         }
         
+        std::cout << "DEBUG: Processing command " << cmdCount << ": " << cmd << std::endl;
+        
         // Parse this command into arguments
         commands[cmdCount].cmdCount = 0;
         char* token = strtok(cmd, " ");
         
         while (token != nullptr && commands[cmdCount].cmdCount < MAX_TOKENS) {
             commands[cmdCount].cmds[commands[cmdCount].cmdCount++] = token;
+            std::cout << "DEBUG: Added argument: " << token << std::endl;
             token = strtok(nullptr, " ");
         }
         
@@ -94,6 +99,8 @@ void parseWithPipes(char* commandLine, Command commands[], int& cmdCount) {
         cmd = strtok(nullptr, "|");
         cmdCount++;
     }
+    
+    std::cout << "DEBUG: Total commands parsed: " << cmdCount << std::endl;
 }
 
 // Function to execute a command
@@ -131,8 +138,11 @@ void execute(Command& command) {
 void executePipes(Command commands[], int cmdCount) {
     if (cmdCount == 0) return;
     
+    std::cout << "DEBUG: Executing " << cmdCount << " piped commands" << std::endl;
+    
     // If there's only one command, execute it normally
     if (cmdCount == 1) {
+        std::cout << "DEBUG: Single command execution" << std::endl;
         execute(commands[0]);
         return;
     }
@@ -145,27 +155,34 @@ void executePipes(Command commands[], int cmdCount) {
             std::cerr << "Pipe creation failed" << std::endl;
             return;
         }
+        std::cout << "DEBUG: Created pipe " << i << std::endl;
     }
     
     // Create child processes for each command
     for (int i = 0; i < cmdCount; i++) {
+        std::cout << "DEBUG: Creating process for command " << i << ": " << commands[i].cmds[0] << std::endl;
+        
         pid_t pid = fork();
         
         if (pid < 0) {
             std::cerr << "Fork failed" << std::endl;
             return;
         } else if (pid == 0) { // Child process
+            std::cout << "DEBUG: Child process " << i << " (PID: " << getpid() << ") starting" << std::endl;
+            
             // Set up pipes for this child
             if (i > 0) { // Not the first command
                 // Read from the previous pipe
                 dup2(pipes[i-1][0], STDIN_FILENO);
                 close(pipes[i-1][1]);
+                std::cout << "DEBUG: Child " << i << " reading from pipe " << (i-1) << std::endl;
             }
             
             if (i < cmdCount - 1) { // Not the last command
                 // Write to the next pipe
                 dup2(pipes[i][1], STDOUT_FILENO);
                 close(pipes[i][0]);
+                std::cout << "DEBUG: Child " << i << " writing to pipe " << i << std::endl;
             }
             
             // Close all other pipes
@@ -175,13 +192,14 @@ void executePipes(Command commands[], int cmdCount) {
             }
             
             // Execute the command
+            std::cout << "DEBUG: Child " << i << " executing: " << commands[i].cmds[0] << std::endl;
             execvp(commands[i].cmds[0], commands[i].cmds);
             std::cerr << "Command not found: " << commands[i].cmds[0] << std::endl;
             exit(1);
         } else { // Parent process
+            std::cout << "DEBUG: Parent created child " << i << " with PID: " << pid << std::endl;
             // Close the pipes that the parent doesn't need
             if (i > 0) {
-                close(pipes[i-1][0]);
                 close(pipes[i-1][1]);
             }
         }
@@ -191,6 +209,7 @@ void executePipes(Command commands[], int cmdCount) {
     for (int i = 0; i < cmdCount; i++) {
         int status;
         wait(&status);
+        std::cout << "DEBUG: Child process " << i << " completed with status: " << status << std::endl;
     }
     
     // Clean up the pipes
