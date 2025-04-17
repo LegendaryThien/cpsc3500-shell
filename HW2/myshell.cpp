@@ -3,12 +3,9 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#define MAX_TOKENS 20      // Maximum MAX_TOKENSber of tokens per command
+#define MAX_TOKENS 20     
 #define MAX_COMMANDS 10
 
-// Command storage implementation using 2D array approach:
-// - commands[MAX_COMMANDS][MAX_TOKENS]: 2D array of pointers to store tokens
-// - tokenCounts[MAX_COMMANDS]: Tracks MAX_TOKENSber of tokens in each command
 char* commands[MAX_COMMANDS][MAX_TOKENS];
 int tokenCounts[MAX_COMMANDS];
 
@@ -42,7 +39,7 @@ void parse(char* commandLine, int& cmdCount) {
         char* cmdEnd;
         
         if (nextPipe != nullptr) {
-            *nextPipe = '\0';  // Replace pipe with null terminator
+            *nextPipe = '\0';  
             cmdEnd = nextPipe - 1;
         } else {
             cmdEnd = currentCmd + strlen(currentCmd) - 1;
@@ -64,6 +61,11 @@ void parse(char* commandLine, int& cmdCount) {
             token = strtok(nullptr, " ");
         }
         
+        if (tokenCounts[currentCmdIndex] >= MAX_TOKENS) {
+            std::cerr << "Error: Too many tokens in command" << std::endl;
+            // Clean up and return
+        }
+        
         // Move to next command
         if (nextPipe != nullptr) {
             currentCmd = nextPipe + 1;
@@ -75,6 +77,11 @@ void parse(char* commandLine, int& cmdCount) {
 void execute(int cmdCount) {
     if (cmdCount == 0) return;
     
+    if (cmdCount > MAX_COMMANDS) {
+        std::cerr << "Error: Too many commands in pipeline" << std::endl;
+        return;
+    }
+    
     if (cmdCount == 1) {
         pid_t pid = fork();
         
@@ -82,14 +89,14 @@ void execute(int cmdCount) {
             perror("fork failed");
             return;
         } else if (pid == 0) {
-            // Create array of pointers for execvp
+
             char* args[MAX_TOKENS + 1];
             
-            // Copy pointers to argument list
+
             for (int i = 0; i < tokenCounts[0]; i++) {
                 args[i] = commands[0][i];
             }
-            args[tokenCounts[0]] = nullptr;  // Null terminate the argument list
+            args[tokenCounts[0]] = nullptr;  
             
             execvp(args[0], args);
             perror("execvp failed");
@@ -111,17 +118,17 @@ void execute(int cmdCount) {
             }
         }
         
-        pid_t pids[MAX_COMMANDS];  // Array to store all child process IDs
+        pid_t pids[MAX_COMMANDS];  
         
         for (int i = 0; i < cmdCount; i++) {
             pid_t pid = fork();
-            pids[i] = pid;  // Store the process ID
+            pids[i] = pid; 
             
             if (pid < 0) {
                 perror("fork failed");
                 return;
             } else if (pid == 0) {
-                // Set up pipes for this command
+
                 if (i > 0) {
                     close(0);
                     dup(pipes[i-1][0]);
@@ -134,7 +141,7 @@ void execute(int cmdCount) {
                     close(pipes[i][0]);
                 }
                 
-                // Close all other pipe ends
+
                 for (int j = 0; j < cmdCount - 1; j++) {
                     if (j != i-1 && j != i) {
                         close(pipes[j][0]);
@@ -142,14 +149,13 @@ void execute(int cmdCount) {
                     }
                 }
                 
-                // Create array of pointers for execvp
+
                 char* args[MAX_TOKENS + 1];
                 
-                // Copy pointers to argument list
                 for (int j = 0; j < tokenCounts[i]; j++) {
                     args[j] = commands[i][j];
                 }
-                args[tokenCounts[i]] = nullptr;  // Null terminate the argument list
+                args[tokenCounts[i]] = nullptr;  
                 
                 execvp(args[0], args);
                 perror("execvp failed");
@@ -173,7 +179,6 @@ void execute(int cmdCount) {
             }
         }
         
-        // Clean up pipes
         for (int i = 0; i < cmdCount - 1; i++) {
             delete[] pipes[i];
         }
