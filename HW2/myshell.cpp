@@ -26,6 +26,12 @@ void parse(char* commandLine, int& cmdCount) {
     // The number of commands is the number of pipes plus 1
     cmdCount = pipeCount + 1;
     
+    if (cmdCount > MAX_COMMANDS) {
+        std::cerr << "Error: Too many commands in pipeline" << std::endl;
+        cmdCount = 0;
+        return;
+    }
+    
     // Split the command line by replacing | with null terminators
     char* currentCmd = commandLine;
     int currentCmdIndex = 0;
@@ -51,19 +57,56 @@ void parse(char* commandLine, int& cmdCount) {
             cmdEnd--;
         }
         
+        // Skip empty commands
+        if (strlen(currentCmd) == 0) {
+            std::cerr << "Error: Empty command in pipeline" << std::endl;
+            // Clean up previously allocated memory
+            for (int i = 0; i < currentCmdIndex; i++) {
+                for (int j = 0; j < tokenCounts[i]; j++) {
+                    free(commands[i][j]);
+                    commands[i][j] = nullptr;
+                }
+                tokenCounts[i] = 0;
+            }
+            cmdCount = 0;
+            return;
+        }
+        
         // Parse this command into tokens
         char* token = strtok(currentCmd, " ");
         
         while (token != nullptr && tokenCounts[currentCmdIndex] < MAX_TOKENS) {
             // Allocate memory for token and copy it
             commands[currentCmdIndex][tokenCounts[currentCmdIndex]] = strdup(token);
+            if (commands[currentCmdIndex][tokenCounts[currentCmdIndex]] == nullptr) {
+                std::cerr << "Error: Memory allocation failed" << std::endl;
+                // Clean up previously allocated memory
+                for (int i = 0; i <= currentCmdIndex; i++) {
+                    for (int j = 0; j < tokenCounts[i]; j++) {
+                        free(commands[i][j]);
+                        commands[i][j] = nullptr;
+                    }
+                    tokenCounts[i] = 0;
+                }
+                cmdCount = 0;
+                return;
+            }
             tokenCounts[currentCmdIndex]++;
             token = strtok(nullptr, " ");
         }
         
         if (tokenCounts[currentCmdIndex] >= MAX_TOKENS) {
             std::cerr << "Error: Too many tokens in command" << std::endl;
-            // Clean up and return
+            // Clean up previously allocated memory
+            for (int i = 0; i <= currentCmdIndex; i++) {
+                for (int j = 0; j < tokenCounts[i]; j++) {
+                    free(commands[i][j]);
+                    commands[i][j] = nullptr;
+                }
+                tokenCounts[i] = 0;
+            }
+            cmdCount = 0;
+            return;
         }
         
         // Move to next command
@@ -89,23 +132,35 @@ void execute(int cmdCount) {
             perror("fork failed");
             return;
         } else if (pid == 0) {
-
+            // Child process
             char* args[MAX_TOKENS + 1];
             
-
+            // Check if we have a valid command
+            if (tokenCounts[0] == 0 || commands[0][0] == nullptr) {
+                std::cerr << "Error: Empty command" << std::endl;
+                exit(1);
+            }
+            
+            // Copy arguments
             for (int i = 0; i < tokenCounts[0]; i++) {
                 args[i] = commands[0][i];
             }
             args[tokenCounts[0]] = nullptr;  
             
             execvp(args[0], args);
-            perror("execvp failed");
+            
+            // If execvp returns, it means it failed
+            std::cerr << "Error: Command '" << args[0] << "' not found or failed to execute" << std::endl;
             exit(1);
         } else {
             int status;
             wait(&status);
             if (WIFEXITED(status)) {
-                std::cout << "Process " << pid << " exited with status " << WEXITSTATUS(status) << std::endl;
+                if (WEXITSTATUS(status) != 0) {
+                    std::cerr << "Process " << pid << " exited with status " << WEXITSTATUS(status) << std::endl;
+                }
+            } else if (WIFSIGNALED(status)) {
+                std::cerr << "Process " << pid << " terminated by signal " << WTERMSIG(status) << std::endl;
             }
         }
     } else {
@@ -114,6 +169,11 @@ void execute(int cmdCount) {
             pipes[i] = new int[2];
             if (pipe(pipes[i]) == -1) {
                 perror("pipe creation failed");
+                // Clean up pipes that were already created
+                for (int j = 0; j < i; j++) {
+                    delete[] pipes[j];
+                }
+                delete[] pipes;
                 return;
             }
         }
@@ -126,6 +186,11 @@ void execute(int cmdCount) {
             
             if (pid < 0) {
                 perror("fork failed");
+                // Clean up pipes
+                for (int j = 0; j < cmdCount - 1; j++) {
+                    delete[] pipes[j];
+                }
+                delete[] pipes;
                 return;
             } else if (pid == 0) {
 
@@ -209,6 +274,9 @@ int main() {
             continue;
         }
         
+        // Reset command count
+        cmdCount = 0;
+        
         if (strchr(commandLine, '|') != nullptr) {
             parse(commandLine, cmdCount);
             if (cmdCount > 0) {
@@ -219,21 +287,59 @@ int main() {
             char* token = strtok(commandLine, " ");
             tokenCounts[0] = 0;
             
+            // Clear any previous commands
+            for (int i = 0; i < MAX_COMMANDS; i++) {
+                for (int j = 0; j < tokenCounts[i]; j++) {
+                    if (commands[i][j] != nullptr) {
+                        free(commands[i][j]);
+                        commands[i][j] = nullptr;
+                    }
+                }
+                tokenCounts[i] = 0;
+            }
+            
             while (token != nullptr && tokenCounts[0] < MAX_TOKENS) {
                 commands[0][tokenCounts[0]] = strdup(token);
+                if (commands[0][tokenCounts[0]] == nullptr) {
+                    std::cerr << "Error: Memory allocation failed" << std::endl;
+                    // Clean up
+                    for (int j = 0; j < tokenCounts[0]; j++) {
+                        free(commands[0][j]);
+                        commands[0][j] = nullptr;
+                    }
+                    tokenCounts[0] = 0;
+                    break;
+                }
                 tokenCounts[0]++;
                 token = strtok(nullptr, " ");
             }
             
-            execute(1);
+            if (tokenCounts[0] > 0) {
+                execute(1);
+            }
         }
         
         // Free allocated memory
         for (int i = 0; i < cmdCount; i++) {
             for (int j = 0; j < tokenCounts[i]; j++) {
+                if (commands[i][j] != nullptr) {
+                    free(commands[i][j]);
+                    commands[i][j] = nullptr;
+                }
+            }
+            tokenCounts[i] = 0;
+        }
+    }
+    
+    // Final cleanup
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        for (int j = 0; j < tokenCounts[i]; j++) {
+            if (commands[i][j] != nullptr) {
                 free(commands[i][j]);
+                commands[i][j] = nullptr;
             }
         }
+        tokenCounts[i] = 0;
     }
     
     return 0;
