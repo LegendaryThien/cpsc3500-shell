@@ -1,18 +1,14 @@
-CC = g++
-CFLAGS = -Wall -Wextra -g
-TARGET = myshell
-SRCS = myshell.cpp
-OBJS = $(SRCS:.cpp=.o)
+CC=g++
+CFLAGS=-Wall
+SOURCES=myshell.cpp
+EXECUTABLE=myshell
 
-all: $(TARGET)
+all: $(EXECUTABLE)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
-
-%.o: %.cpp
-	$(CC) $(CFLAGS) -c $< -o $@
+$(EXECUTABLE): $(SOURCES)
+	$(CC) $(CFLAGS) $(SOURCES) -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(EXECUTABLE)
 
 .PHONY: all clean 
