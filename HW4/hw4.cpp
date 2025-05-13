@@ -20,9 +20,6 @@ struct CarInfo {
 // Synchronization primitives
 pthread_mutex_t road_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t north_cond = PTHREAD_COND_INITIALIZER;
-pthread_cond_t south_cond = PTHREAD_COND_INITIALIZER;
-pthread_cond_t flagger_cond = PTHREAD_COND_INITIALIZER;
 
 // Global variables
 bool flagger_awake = false;
@@ -70,14 +67,18 @@ void* north_car_thread(void* arg) {
     cars_waiting_north++;
     
     // Wake up flagger if sleeping
-    if (!flagger_awake) {
-        flagger_awake = true;
-        pthread_cond_signal(&flagger_cond);
-    }
+    flagger_awake = true;
     
-    // Wait for permission to proceed
-    while (current_direction != 'N') {
-        pthread_cond_wait(&north_cond, &road_mutex);
+    pthread_mutex_unlock(&road_mutex);
+    
+    // Busy wait for permission to proceed
+    while (true) {
+        pthread_mutex_lock(&road_mutex);
+        if (current_direction == 'N') {
+            break;
+        }
+        pthread_mutex_unlock(&road_mutex);
+        usleep(100000); // Sleep for 100ms to prevent excessive CPU usage
     }
     
     // Record start time
@@ -124,14 +125,18 @@ void* south_car_thread(void* arg) {
     cars_waiting_south++;
     
     // Wake up flagger if sleeping
-    if (!flagger_awake) {
-        flagger_awake = true;
-        pthread_cond_signal(&flagger_cond);
-    }
+    flagger_awake = true;
     
-    // Wait for permission to proceed
-    while (current_direction != 'S') {
-        pthread_cond_wait(&south_cond, &road_mutex);
+    pthread_mutex_unlock(&road_mutex);
+    
+    // Busy wait for permission to proceed
+    while (true) {
+        pthread_mutex_lock(&road_mutex);
+        if (current_direction == 'S') {
+            break;
+        }
+        pthread_mutex_unlock(&road_mutex);
+        usleep(100000); // Sleep for 100ms to prevent excessive CPU usage
     }
     
     // Record start time
@@ -164,12 +169,11 @@ void* south_car_thread(void* arg) {
 
 // Flagger thread function
 void* flagger_thread(void* arg) {
-    
-    while (program_running) {  // Changed condition to check program_running
+    while (program_running) {
         pthread_mutex_lock(&road_mutex);
         
         // Sleep if no cars waiting
-        while (cars_waiting_north == 0 && cars_waiting_south == 0 && program_running) {  // Added program_running check
+        if (cars_waiting_north == 0 && cars_waiting_south == 0) {
             flagger_awake = false;
             printf("Flagger is sleeping\n");
             
@@ -178,11 +182,18 @@ void* flagger_thread(void* arg) {
             flagger_log << getCurrentTime() << " sleep" << std::endl;
             pthread_mutex_unlock(&log_mutex);
             
-            pthread_cond_wait(&flagger_cond, &road_mutex);
-            if (!program_running) {  // Check if we should exit
-                pthread_mutex_unlock(&road_mutex);
+            pthread_mutex_unlock(&road_mutex);
+            
+            // Busy wait for cars
+            while (!flagger_awake && program_running) {
+                usleep(100000); // Sleep for 100ms
+            }
+            
+            if (!program_running) {
                 pthread_exit(NULL);
             }
+            
+            pthread_mutex_lock(&road_mutex);
             printf("Flagger woke up\n");
             
             // Log wake up event
@@ -202,13 +213,6 @@ void* flagger_thread(void* arg) {
         }
         
         printf("Flagger allowing traffic from %c\n", current_direction);
-        
-        // Signal waiting cars in the current direction
-        if (current_direction == 'N') {
-            pthread_cond_broadcast(&north_cond);
-        } else {
-            pthread_cond_broadcast(&south_cond);
-        }
         
         pthread_mutex_unlock(&road_mutex);
         sleep(2); // Give time for cars to pass
@@ -322,7 +326,7 @@ int main(int argc, char* argv[]) {
     // Signal flagger to exit
     pthread_mutex_lock(&road_mutex);
     program_running = false;
-    pthread_cond_signal(&flagger_cond);  // Wake up flagger to check program_running
+    flagger_awake = true;  // Wake up flagger to check program_running
     pthread_mutex_unlock(&road_mutex);
     
     // Wait for flagger thread to complete
