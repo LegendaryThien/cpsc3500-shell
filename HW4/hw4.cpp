@@ -4,6 +4,9 @@
 #include <unistd.h> // for sleep
 #include <time.h>   // for time functions
 #include <fstream>  // for file operations
+#include <random>
+#include <chrono>
+#include <atomic>
 
 // Example struct for car info
 struct CarInfo {
@@ -29,6 +32,10 @@ int cars_waiting_north = 0;
 int cars_waiting_south = 0;
 std::ofstream car_log("car.log");
 std::ofstream flagger_log("flagger.log");
+std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+std::uniform_real_distribution<double> dist(0.0, 1.0);
+std::atomic<int> next_car_id(1);  // For generating unique car IDs
+std::atomic<int> total_cars_passed(0);  // Track total cars that have passed through
 
 // Initialize log headers
 void initialize_logs() {
@@ -107,6 +114,9 @@ void* car_thread(void* arg) {
         cars_waiting_south--;
     }
     
+    // Increment total cars passed
+    total_cars_passed++;
+    
     pthread_mutex_unlock(&road_mutex);
     pthread_exit(NULL);
 }
@@ -166,10 +176,47 @@ void* flagger_thread(void* arg) {
     pthread_exit(NULL);
 }
 
-int main() {
+bool shouldCreateNextCar() {
+    return dist(rng) < 0.8;  // 80% chance
+}
+
+// Add this function before main()
+int pthread_sleep(int seconds) {
+    pthread_mutex_t mutex;
+    pthread_cond_t conditionvar;
+    struct timespec timetoexpire;
+    
+    if(pthread_mutex_init(&mutex,NULL)) {
+        return -1;
+    }
+    if(pthread_cond_init(&conditionvar,NULL)) {
+        return -1;
+    }
+    
+    //When to expire is an absolute time, so get the current time and add
+    //it to our delay time
+    timetoexpire.tv_sec = (unsigned int)time(NULL) + seconds;
+    timetoexpire.tv_nsec = 0;
+    
+    return pthread_cond_timedwait(&conditionvar, &mutex, &timetoexpire);
+}
+
+int main(int argc, char* argv[]) {
+    // Check for command line argument
+    if (argc != 2) {
+        printf("Usage: %s <number_of_cars>\n", argv[0]);
+        return 1;
+    }
+    
+    int target_cars = atoi(argv[1]);
+    if (target_cars <= 0) {
+        printf("Number of cars must be positive\n");
+        return 1;
+    }
+    
     pthread_t flagger;
-    pthread_t cars[10];  // Array to store car thread IDs
-    CarInfo car_info[10];  // Array to store car information
+    std::vector<pthread_t> car_threads;  // Dynamic array for car threads
+    std::vector<CarInfo*> car_infos;     // Dynamic array for car info
     
     // Initialize log files with headers
     initialize_logs();
@@ -180,23 +227,44 @@ int main() {
         return 1;
     }
     
-    // Create car threads
-    for (int i = 0; i < 10; i++) {
-        car_info[i].carID = i + 1;
-        car_info[i].direction = (i % 2 == 0) ? 'N' : 'S';  // Alternate directions
-        
-        if (pthread_create(&cars[i], NULL, car_thread, &car_info[i]) != 0) {
-            perror("Failed to create car thread");
-            return 1;
+    // Create first car
+    CarInfo* first_car = new CarInfo();
+    first_car->carID = next_car_id++;
+    first_car->direction = 'N';  // Start with North direction
+    
+    pthread_t first_car_thread;
+    if (pthread_create(&first_car_thread, NULL, car_thread, first_car) != 0) {
+        perror("Failed to create first car thread");
+        return 1;
+    }
+    
+    car_threads.push_back(first_car_thread);
+    car_infos.push_back(first_car);
+    
+    // Keep creating cars with 80% probability until we reach target
+    while (total_cars_passed < target_cars) {
+        if (shouldCreateNextCar()) {
+            CarInfo* new_car = new CarInfo();
+            new_car->carID = next_car_id++;
+            new_car->direction = (car_infos.back()->direction == 'N') ? 'S' : 'N';  // Alternate directions
+            
+            pthread_t new_car_thread;
+            if (pthread_create(&new_car_thread, NULL, car_thread, new_car) != 0) {
+                perror("Failed to create car thread");
+                break;
+            }
+            
+            car_threads.push_back(new_car_thread);
+            car_infos.push_back(new_car);
         }
         
-        // Add some delay between car arrivals
-        sleep(1);
+        pthread_sleep(1);  // Wait a second before deciding on next car
     }
     
     // Wait for all car threads to complete
-    for (int i = 0; i < 10; i++) {
-        pthread_join(cars[i], NULL);
+    for (size_t i = 0; i < car_threads.size(); i++) {
+        pthread_join(car_threads[i], NULL);
+        delete car_infos[i];  // Clean up car info
     }
     
     // Signal flagger to exit
