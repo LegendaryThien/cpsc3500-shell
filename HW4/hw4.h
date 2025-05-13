@@ -10,11 +10,10 @@
 #include <atomic>
 
 // Constants
-const int MAX_CARS = 10;  // Maximum cars waiting before switching directions
-const int CONSTRUCTION_TIME = 1;  // Time to pass construction zone
-const int GAP_TIME = 5;  // Gap between car arrivals
+const int MAX_CARS = 10;  
+const int CONSTRUCTION_TIME = 1;  
+const int GAP_TIME = 5;  
 
-// Car information structure
 struct CarInfo {
     int carID;
     char direction;  // 'N' or 'S'
@@ -26,11 +25,11 @@ struct CarInfo {
 class RoadSystem {
 private:
     // Synchronization primitives
-    sem_t constructionZone;  // Controls access to construction zone
-    sem_t flaggerSignal;    // Signals flagger to wake up
-    pthread_mutex_t queueMutex;  // Protects car queues
-    pthread_mutex_t logMutex;    // Protects log files
-    pthread_mutex_t counterMutex;  // Protects totalCarsPassed
+    sem_t constructionZone;  
+    sem_t flaggerSignal;    
+    pthread_mutex_t queueMutex;  
+    pthread_mutex_t logMutex;    
+    pthread_mutex_t counterMutex;  
 
     // Threads
     pthread_t flaggerThread;
