@@ -258,7 +258,14 @@ int main(int argc, char* argv[]) {
             car_infos.push_back(new_car);
         }
         
-        pthread_sleep(1);  // Wait a second before deciding on next car
+        // Check if there are any cars waiting
+        if (cars_waiting_north == 0 && cars_waiting_south == 0) {
+            // If no cars are waiting, sleep for 5 seconds
+            pthread_sleep(5);
+        } else {
+            // If there are cars waiting, sleep for 1 second
+            pthread_sleep(1);
+        }
     }
     
     // Wait for all car threads to complete
@@ -284,3 +291,4 @@ int main(int argc, char* argv[]) {
     
     return 0;
 }
+
