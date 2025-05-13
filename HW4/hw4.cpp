@@ -23,6 +23,7 @@ pthread_cond_t flagger_cond = PTHREAD_COND_INITIALIZER;
 
 // Global variables
 bool flagger_awake = false;
+bool program_running = true;  // New flag to control program execution
 char current_direction = 'N';  // Default direction
 int cars_waiting_north = 0;
 int cars_waiting_south = 0;
@@ -112,16 +113,12 @@ void* car_thread(void* arg) {
 
 // Flagger thread function
 void* flagger_thread(void* arg) {
-    // Initialize flagger log header
-    pthread_mutex_lock(&log_mutex);
-    flagger_log << "Time State" << std::endl;
-    pthread_mutex_unlock(&log_mutex);
     
-    while (1) {
+    while (program_running) {  // Changed condition to check program_running
         pthread_mutex_lock(&road_mutex);
         
         // Sleep if no cars waiting
-        while (cars_waiting_north == 0 && cars_waiting_south == 0) {
+        while (cars_waiting_north == 0 && cars_waiting_south == 0 && program_running) {  // Added program_running check
             flagger_awake = false;
             printf("Flagger is sleeping\n");
             
@@ -131,6 +128,10 @@ void* flagger_thread(void* arg) {
             pthread_mutex_unlock(&log_mutex);
             
             pthread_cond_wait(&flagger_cond, &road_mutex);
+            if (!program_running) {  // Check if we should exit
+                pthread_mutex_unlock(&road_mutex);
+                pthread_exit(NULL);
+            }
             printf("Flagger woke up\n");
             
             // Log wake up event
@@ -198,7 +199,13 @@ int main() {
         pthread_join(cars[i], NULL);
     }
     
-    // Wait for flagger thread to complete (you might need to add a way to signal it to exit)
+    // Signal flagger to exit
+    pthread_mutex_lock(&road_mutex);
+    program_running = false;
+    pthread_cond_signal(&flagger_cond);  // Wake up flagger to check program_running
+    pthread_mutex_unlock(&road_mutex);
+    
+    // Wait for flagger thread to complete
     pthread_join(flagger, NULL);
     
     // Close and flush log files
