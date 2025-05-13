@@ -235,7 +235,7 @@ void* flagger_thread(void* arg) {
             flagger_log.flush();
             pthread_mutex_unlock(&log_mutex);
             
-            printf("Flagger is sleeping\n");
+            printf("Flagger is sleeping at %s\n", getCurrentTime().c_str());
             pthread_sleep(5);
             continue;
         }
@@ -250,7 +250,7 @@ void* flagger_thread(void* arg) {
         flagger_log.flush();
         pthread_mutex_unlock(&log_mutex);
         
-        printf("Flagger woke up\n");
+        printf("Flagger woke up at %s\n", getCurrentTime().c_str());
         
         // Determine which direction to allow
         sem_wait(&northQueue);
@@ -290,7 +290,7 @@ void* flagger_thread(void* arg) {
         flagger_log.flush();
         pthread_mutex_unlock(&log_mutex);
         
-        printf("Flagger going back to sleep\n");
+        printf("Flagger going back to sleep at %s\n", getCurrentTime().c_str());
         pthread_sleep(5);
     }
     
