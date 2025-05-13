@@ -2,16 +2,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h> // for sleep
+#include <time.h>   // for time functions
+#include <fstream>  // for file operations
 
 // Example struct for car info
 struct CarInfo {
     int carID;
     char direction; // 'N' or 'S'
-    // Add more fields as needed
+    time_t arrivalTime;
+    time_t startTime;
+    time_t endTime;
 };
 
 // Synchronization primitives
 pthread_mutex_t road_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t north_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t south_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t flagger_cond = PTHREAD_COND_INITIALIZER;
@@ -21,10 +26,32 @@ bool flagger_awake = false;
 char current_direction = 'N';  // Default direction
 int cars_waiting_north = 0;
 int cars_waiting_south = 0;
+std::ofstream car_log("car.log");
+std::ofstream flagger_log("flagger.log");
+
+// Initialize log headers
+void initialize_logs() {
+    pthread_mutex_lock(&log_mutex);
+    car_log << "carID direction arrival-time start-time end-time" << std::endl;
+    flagger_log << "Time State" << std::endl;
+    pthread_mutex_unlock(&log_mutex);
+}
+
+// Helper function to get current time as string
+std::string getCurrentTime() {
+    time_t now = time(nullptr);
+    struct tm* timeinfo = localtime(&now);
+    char buffer[9];
+    strftime(buffer, sizeof(buffer), "%H:%M:%S", timeinfo);
+    return std::string(buffer);
+}
 
 // Car thread function
 void* car_thread(void* arg) {
     CarInfo* car = (CarInfo*)arg;
+    
+    // Record arrival time
+    car->arrivalTime = time(nullptr);
     
     // Car arrives
     printf("Car %d arrived from %c\n", car->carID, car->direction);
@@ -53,9 +80,24 @@ void* car_thread(void* arg) {
         }
     }
     
+    // Record start time
+    car->startTime = time(nullptr);
+    
     // Car passes
     printf("Car %d passing from %c\n", car->carID, car->direction);
     sleep(1); // Simulate time to pass
+    
+    // Record end time
+    car->endTime = time(nullptr);
+    
+    // Log car event
+    pthread_mutex_lock(&log_mutex);
+    car_log << car->carID << " " 
+            << car->direction << " "
+            << getCurrentTime() << " "
+            << getCurrentTime() << " "
+            << getCurrentTime() << std::endl;
+    pthread_mutex_unlock(&log_mutex);
     
     // Decrement waiting cars count
     if (car->direction == 'N') {
@@ -70,6 +112,11 @@ void* car_thread(void* arg) {
 
 // Flagger thread function
 void* flagger_thread(void* arg) {
+    // Initialize flagger log header
+    pthread_mutex_lock(&log_mutex);
+    flagger_log << "Time State" << std::endl;
+    pthread_mutex_unlock(&log_mutex);
+    
     while (1) {
         pthread_mutex_lock(&road_mutex);
         
@@ -77,8 +124,19 @@ void* flagger_thread(void* arg) {
         while (cars_waiting_north == 0 && cars_waiting_south == 0) {
             flagger_awake = false;
             printf("Flagger is sleeping\n");
+            
+            // Log sleep event
+            pthread_mutex_lock(&log_mutex);
+            flagger_log << getCurrentTime() << " sleep" << std::endl;
+            pthread_mutex_unlock(&log_mutex);
+            
             pthread_cond_wait(&flagger_cond, &road_mutex);
             printf("Flagger woke up\n");
+            
+            // Log wake up event
+            pthread_mutex_lock(&log_mutex);
+            flagger_log << getCurrentTime() << " woken-up" << std::endl;
+            pthread_mutex_unlock(&log_mutex);
         }
         
         // Determine which direction to allow
@@ -112,6 +170,9 @@ int main() {
     pthread_t cars[10];  // Array to store car thread IDs
     CarInfo car_info[10];  // Array to store car information
     
+    // Initialize log files with headers
+    initialize_logs();
+    
     // Create flagger thread
     if (pthread_create(&flagger, NULL, flagger_thread, NULL) != 0) {
         perror("Failed to create flagger thread");
@@ -137,11 +198,14 @@ int main() {
         pthread_join(cars[i], NULL);
     }
     
-    // Clean up synchronization primitives
-    pthread_mutex_destroy(&road_mutex);
-    pthread_cond_destroy(&north_cond);
-    pthread_cond_destroy(&south_cond);
-    pthread_cond_destroy(&flagger_cond);
+    // Wait for flagger thread to complete (you might need to add a way to signal it to exit)
+    pthread_join(flagger, NULL);
+    
+    // Close and flush log files
+    car_log.flush();
+    flagger_log.flush();
+    car_log.close();
+    flagger_log.close();
     
     return 0;
 }
