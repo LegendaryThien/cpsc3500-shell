@@ -7,6 +7,29 @@
 #include <random>
 #include <chrono>
 #include <atomic>
+#include <vector>
+#include <stdexcept>
+
+// Helper function for thread sleep
+int pthread_sleep(int seconds) {
+    pthread_mutex_t mutex;
+    pthread_cond_t conditionvar;
+    struct timespec timetoexpire;
+    
+    if(pthread_mutex_init(&mutex,NULL)) {
+        return -1;
+    }
+    if(pthread_cond_init(&conditionvar,NULL)) {
+        return -1;
+    }
+    
+    //When to expire is an absolute time, so get the current time and add
+    //it to our delay time
+    timetoexpire.tv_sec = (unsigned int)time(NULL) + seconds;
+    timetoexpire.tv_nsec = 0;
+    
+    return pthread_cond_timedwait(&conditionvar, &mutex, &timetoexpire);
+}
 
 // Example struct for car info
 struct CarInfo {
@@ -51,61 +74,71 @@ std::string getCurrentTime() {
     return std::string(buffer);
 }
 
+// Helper function to check pthread operations
+void check_pthread(int rc, const char* msg) {
+    if (rc != 0) {
+        fprintf(stderr, "Error: %s (error code: %d)\n", msg, rc);
+        throw std::runtime_error(msg);
+    }
+}
+
 // North-bound car thread function
 void* north_car_thread(void* arg) {
-    CarInfo* car = (CarInfo*)arg;
-    
-    // Record arrival time
-    car->arrivalTime = time(nullptr);
-    
-    // Car arrives
-    printf("Car %d arrived from N\n", car->carID);
-    
-    pthread_mutex_lock(&road_mutex);
-    
-    // Increment waiting cars count
-    cars_waiting_north++;
-    
-    // Wake up flagger if sleeping
-    flagger_awake = true;
-    
-    pthread_mutex_unlock(&road_mutex);
-    
-    // Busy wait for permission to proceed
-    while (true) {
-        pthread_mutex_lock(&road_mutex);
-        if (current_direction == 'N') {
-            break;
+    CarInfo* car = nullptr;
+    try {
+        car = static_cast<CarInfo*>(arg);
+        if (!car) {
+            throw std::runtime_error("Invalid car info pointer");
         }
-        pthread_mutex_unlock(&road_mutex);
-        usleep(100000); // Sleep for 100ms to prevent excessive CPU usage
+        
+        // Record arrival time
+        car->arrivalTime = time(nullptr);
+        
+        // Car arrives
+        printf("Car %d arrived from N\n", car->carID);
+        
+        check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
+        cars_waiting_north++;
+        flagger_awake = true;
+        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
+        
+        // Busy wait for permission to proceed
+        while (true) {
+            check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
+            if (current_direction == 'N') {
+                break;
+            }
+            check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
+            pthread_sleep(1);
+        }
+        
+        // Record start time
+        car->startTime = time(nullptr);
+        
+        // Car passes
+        printf("Car %d passing from N\n", car->carID);
+        sleep(1);
+        
+        // Record end time
+        car->endTime = time(nullptr);
+        
+        // Log car event
+        check_pthread(pthread_mutex_lock(&log_mutex), "Failed to lock log mutex");
+        car_log << car->carID << " N "
+                << getCurrentTime() << " "
+                << getCurrentTime() << " "
+                << getCurrentTime() << std::endl;
+        check_pthread(pthread_mutex_unlock(&log_mutex), "Failed to unlock log mutex");
+        
+        // Decrement waiting cars count
+        cars_waiting_north--;
+        total_cars_passed++;
+        
+        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
+    } catch (const std::exception& e) {
+        fprintf(stderr, "Error in north_car_thread: %s\n", e.what());
     }
     
-    // Record start time
-    car->startTime = time(nullptr);
-    
-    // Car passes
-    printf("Car %d passing from N\n", car->carID);
-    sleep(1); // Simulate time to pass
-    
-    // Record end time
-    car->endTime = time(nullptr);
-    
-    // Log car event
-    pthread_mutex_lock(&log_mutex);
-    car_log << car->carID << " N "
-            << getCurrentTime() << " "
-            << getCurrentTime() << " "
-            << getCurrentTime() << std::endl;
-    pthread_mutex_unlock(&log_mutex);
-    
-    // Decrement waiting cars count
-    cars_waiting_north--;
-    
-    // Increment total cars passed
-    total_cars_passed++;
-    
-    pthread_mutex_unlock(&road_mutex);
     pthread_exit(NULL);
 }
 
@@ -120,13 +153,8 @@ void* south_car_thread(void* arg) {
     printf("Car %d arrived from S\n", car->carID);
     
     pthread_mutex_lock(&road_mutex);
-    
-    // Increment waiting cars count
     cars_waiting_south++;
-    
-    // Wake up flagger if sleeping
     flagger_awake = true;
-    
     pthread_mutex_unlock(&road_mutex);
     
     // Busy wait for permission to proceed
@@ -136,7 +164,7 @@ void* south_car_thread(void* arg) {
             break;
         }
         pthread_mutex_unlock(&road_mutex);
-        usleep(100000); // Sleep for 100ms to prevent excessive CPU usage
+        pthread_sleep(1); // Sleep for 1 second between checks
     }
     
     // Record start time
@@ -159,8 +187,6 @@ void* south_car_thread(void* arg) {
     
     // Decrement waiting cars count
     cars_waiting_south--;
-    
-    // Increment total cars passed
     total_cars_passed++;
     
     pthread_mutex_unlock(&road_mutex);
@@ -186,7 +212,7 @@ void* flagger_thread(void* arg) {
             
             // Busy wait for cars
             while (!flagger_awake && program_running) {
-                usleep(100000); // Sleep for 100ms
+                pthread_sleep(1); // Sleep for 1 second between checks
             }
             
             if (!program_running) {
@@ -215,7 +241,7 @@ void* flagger_thread(void* arg) {
         printf("Flagger allowing traffic from %c\n", current_direction);
         
         pthread_mutex_unlock(&road_mutex);
-        sleep(2); // Give time for cars to pass
+        pthread_sleep(2); // Give time for cars to pass
     }
     
     pthread_exit(NULL);
@@ -225,118 +251,100 @@ bool shouldCreateNextCar() {
     return dist(rng) < 0.8;  // 80% chance
 }
 
-// Add this function before main()
-int pthread_sleep(int seconds) {
-    pthread_mutex_t mutex;
-    pthread_cond_t conditionvar;
-    struct timespec timetoexpire;
-    
-    if(pthread_mutex_init(&mutex,NULL)) {
-        return -1;
-    }
-    if(pthread_cond_init(&conditionvar,NULL)) {
-        return -1;
-    }
-    
-    //When to expire is an absolute time, so get the current time and add
-    //it to our delay time
-    timetoexpire.tv_sec = (unsigned int)time(NULL) + seconds;
-    timetoexpire.tv_nsec = 0;
-    
-    return pthread_cond_timedwait(&conditionvar, &mutex, &timetoexpire);
-}
-
 int main(int argc, char* argv[]) {
-    // Check for command line argument
-    if (argc != 2) {
-        printf("Usage: %s <number_of_cars>\n", argv[0]);
-        return 1;
-    }
-    
-    int target_cars = atoi(argv[1]);
-    if (target_cars <= 0) {
-        printf("Number of cars must be positive\n");
-        return 1;
-    }
-    
-    pthread_t flagger;
-    std::vector<pthread_t> car_threads;  // Dynamic array for car threads
-    std::vector<CarInfo*> car_infos;     // Dynamic array for car info
-    
-    // Initialize log files with headers
-    initialize_logs();
-    
-    // Create flagger thread
-    if (pthread_create(&flagger, NULL, flagger_thread, NULL) != 0) {
-        perror("Failed to create flagger thread");
-        return 1;
-    }
-    
-    // Create first car
-    CarInfo* first_car = new CarInfo();
-    first_car->carID = next_car_id++;
-    first_car->direction = 'N';  // Start with North direction
-    
-    pthread_t first_car_thread;
-    if (pthread_create(&first_car_thread, NULL, 
-        (first_car->direction == 'N') ? north_car_thread : south_car_thread, 
-        first_car) != 0) {
-        perror("Failed to create first car thread");
-        return 1;
-    }
-    
-    car_threads.push_back(first_car_thread);
-    car_infos.push_back(first_car);
-    
-    // Keep creating cars with 80% probability until we reach target
-    while (total_cars_passed < target_cars) {
-        if (shouldCreateNextCar()) {
-            CarInfo* new_car = new CarInfo();
-            new_car->carID = next_car_id++;
-            new_car->direction = (car_infos.back()->direction == 'N') ? 'S' : 'N';  // Alternate directions
-            
-            pthread_t new_car_thread;
-            if (pthread_create(&new_car_thread, NULL, 
-                (new_car->direction == 'N') ? north_car_thread : south_car_thread, 
-                new_car) != 0) {
-                perror("Failed to create car thread");
-                break;
-            }
-            
-            car_threads.push_back(new_car_thread);
-            car_infos.push_back(new_car);
+    try {
+        // Check for command line argument
+        if (argc != 2) {
+            printf("Usage: %s <number_of_cars>\n", argv[0]);
+            return 1;
         }
         
-        // Check if there are any cars waiting
-        if (cars_waiting_north == 0 && cars_waiting_south == 0) {
-            // If no cars are waiting, sleep for 5 seconds
-            pthread_sleep(5);
-        } else {
-            // If there are cars waiting, sleep for 1 second
-            pthread_sleep(1);
+        int target_cars = atoi(argv[1]);
+        if (target_cars <= 0) {
+            printf("Number of cars must be positive\n");
+            return 1;
         }
+        
+        pthread_t flagger;
+        std::vector<pthread_t> car_threads;
+        std::vector<CarInfo*> car_infos;
+        
+        // Initialize log files with headers
+        initialize_logs();
+        
+        // Create flagger thread
+        check_pthread(pthread_create(&flagger, NULL, flagger_thread, NULL),
+                     "Failed to create flagger thread");
+        
+        // Create first car
+        CarInfo* first_car = new (std::nothrow) CarInfo();
+        if (!first_car) {
+            throw std::runtime_error("Failed to allocate memory for first car");
+        }
+        
+        first_car->carID = next_car_id++;
+        first_car->direction = 'N';
+        
+        pthread_t first_car_thread;
+        check_pthread(pthread_create(&first_car_thread, NULL, 
+            (first_car->direction == 'N') ? north_car_thread : south_car_thread, 
+            first_car), "Failed to create first car thread");
+        
+        car_threads.push_back(first_car_thread);
+        car_infos.push_back(first_car);
+        
+        // Keep creating cars with 80% probability until we reach target
+        while (total_cars_passed < target_cars) {
+            if (shouldCreateNextCar()) {
+                CarInfo* new_car = new (std::nothrow) CarInfo();
+                if (!new_car) {
+                    throw std::runtime_error("Failed to allocate memory for new car");
+                }
+                
+                new_car->carID = next_car_id++;
+                new_car->direction = (car_infos.back()->direction == 'N') ? 'S' : 'N';
+                
+                pthread_t new_car_thread;
+                check_pthread(pthread_create(&new_car_thread, NULL, 
+                    (new_car->direction == 'N') ? north_car_thread : south_car_thread, 
+                    new_car), "Failed to create car thread");
+                
+                car_threads.push_back(new_car_thread);
+                car_infos.push_back(new_car);
+            }
+            
+            if (cars_waiting_north == 0 && cars_waiting_south == 0) {
+                pthread_sleep(5);
+            } else {
+                pthread_sleep(1);
+            }
+        }
+        
+        // Wait for all car threads to complete
+        for (size_t i = 0; i < car_threads.size(); i++) {
+            check_pthread(pthread_join(car_threads[i], NULL), "Failed to join car thread");
+            delete car_infos[i];
+        }
+        
+        // Signal flagger to exit
+        check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
+        program_running = false;
+        flagger_awake = true;
+        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
+        
+        // Wait for flagger thread to complete
+        check_pthread(pthread_join(flagger, NULL), "Failed to join flagger thread");
+        
+        // Close and flush log files
+        car_log.flush();
+        flagger_log.flush();
+        car_log.close();
+        flagger_log.close();
+        
+    } catch (const std::exception& e) {
+        fprintf(stderr, "Fatal error: %s\n", e.what());
+        return 1;
     }
-    
-    // Wait for all car threads to complete
-    for (size_t i = 0; i < car_threads.size(); i++) {
-        pthread_join(car_threads[i], NULL);
-        delete car_infos[i];  // Clean up car info
-    }
-    
-    // Signal flagger to exit
-    pthread_mutex_lock(&road_mutex);
-    program_running = false;
-    flagger_awake = true;  // Wake up flagger to check program_running
-    pthread_mutex_unlock(&road_mutex);
-    
-    // Wait for flagger thread to complete
-    pthread_join(flagger, NULL);
-    
-    // Close and flush log files
-    car_log.flush();
-    flagger_log.flush();
-    car_log.close();
-    flagger_log.close();
     
     return 0;
 }
