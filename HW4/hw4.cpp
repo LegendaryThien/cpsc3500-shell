@@ -63,8 +63,13 @@ std::atomic<int> total_cars_passed(0);  // Track total cars that have passed thr
 // Initialize log headers
 void initialize_logs() {
     pthread_mutex_lock(&log_mutex);
+    if (!car_log.is_open() || !flagger_log.is_open()) {
+        throw std::runtime_error("Failed to open log files");
+    }
     car_log << "carID direction arrival-time start-time end-time" << std::endl;
     flagger_log << "Time State" << std::endl;
+    car_log.flush();
+    flagger_log.flush();
     pthread_mutex_unlock(&log_mutex);
 }
 
@@ -94,7 +99,8 @@ void* north_car_thread(void* arg) {
     
     // Record arrival time
     car->arrivalTime = time(nullptr);
-    printf("Car %d arrived from N\n", car->carID);
+    std::string arrival_time = getCurrentTime();
+    printf("Car %d arrived from N at %s\n", car->carID, arrival_time.c_str());
     
     // Increment north queue counter
     sem_wait(&northQueue);
@@ -106,22 +112,30 @@ void* north_car_thread(void* arg) {
     
     // Record start time
     car->startTime = time(nullptr);
-    printf("Car %d passing from N\n", car->carID);
+    std::string start_time = getCurrentTime();
+    printf("Car %d passing from N at %s\n", car->carID, start_time.c_str());
     
     // Simulate passage through construction zone
     pthread_sleep(1);
     
     // Record end time
     car->endTime = time(nullptr);
+    std::string end_time = getCurrentTime();
     
     // Log car event
     pthread_mutex_lock(&log_mutex);
+    if (!car_log.is_open()) {
+        pthread_mutex_unlock(&log_mutex);
+        throw std::runtime_error("Car log file is not open");
+    }
     car_log << car->carID << " N "
-            << getCurrentTime() << " "
-            << getCurrentTime() << " "
-            << getCurrentTime() << std::endl;
+            << arrival_time << " "
+            << start_time << " "
+            << end_time << std::endl;
     car_log.flush();
     pthread_mutex_unlock(&log_mutex);
+    
+    printf("Car %d completed passage from N at %s\n", car->carID, end_time.c_str());
     
     // Decrement counters
     sem_wait(&northQueue);
@@ -147,7 +161,8 @@ void* south_car_thread(void* arg) {
     
     // Record arrival time
     car->arrivalTime = time(nullptr);
-    printf("Car %d arrived from S\n", car->carID);
+    std::string arrival_time = getCurrentTime();
+    printf("Car %d arrived from S at %s\n", car->carID, arrival_time.c_str());
     
     // Increment south queue counter
     sem_wait(&southQueue);
@@ -159,22 +174,30 @@ void* south_car_thread(void* arg) {
     
     // Record start time
     car->startTime = time(nullptr);
-    printf("Car %d passing from S\n", car->carID);
+    std::string start_time = getCurrentTime();
+    printf("Car %d passing from S at %s\n", car->carID, start_time.c_str());
     
     // Simulate passage through construction zone
     pthread_sleep(1);
     
     // Record end time
     car->endTime = time(nullptr);
+    std::string end_time = getCurrentTime();
     
     // Log car event
     pthread_mutex_lock(&log_mutex);
+    if (!car_log.is_open()) {
+        pthread_mutex_unlock(&log_mutex);
+        throw std::runtime_error("Car log file is not open");
+    }
     car_log << car->carID << " S "
-            << getCurrentTime() << " "
-            << getCurrentTime() << " "
-            << getCurrentTime() << std::endl;
+            << arrival_time << " "
+            << start_time << " "
+            << end_time << std::endl;
     car_log.flush();
     pthread_mutex_unlock(&log_mutex);
+    
+    printf("Car %d completed passage from S at %s\n", car->carID, end_time.c_str());
     
     // Decrement counters
     sem_wait(&southQueue);
@@ -204,6 +227,10 @@ void* flagger_thread(void* arg) {
         if (!has_cars) {
             // Log sleep event
             pthread_mutex_lock(&log_mutex);
+            if (!flagger_log.is_open()) {
+                pthread_mutex_unlock(&log_mutex);
+                throw std::runtime_error("Flagger log file is not open");
+            }
             flagger_log << getCurrentTime() << " sleep" << std::endl;
             flagger_log.flush();
             pthread_mutex_unlock(&log_mutex);
@@ -215,6 +242,10 @@ void* flagger_thread(void* arg) {
         
         // Log wake up event
         pthread_mutex_lock(&log_mutex);
+        if (!flagger_log.is_open()) {
+            pthread_mutex_unlock(&log_mutex);
+            throw std::runtime_error("Flagger log file is not open");
+        }
         flagger_log << getCurrentTime() << " woken-up" << std::endl;
         flagger_log.flush();
         pthread_mutex_unlock(&log_mutex);
@@ -359,10 +390,14 @@ int main(int argc, char* argv[]) {
         sem_destroy(&southQueue);
         
         // Close and flush log files
-        car_log.flush();
-        flagger_log.flush();
-        car_log.close();
-        flagger_log.close();
+        if (car_log.is_open()) {
+            car_log.flush();
+            car_log.close();
+        }
+        if (flagger_log.is_open()) {
+            flagger_log.flush();
+            flagger_log.close();
+        }
         
     } catch (const std::exception& e) {
         fprintf(stderr, "Fatal error: %s\n", e.what());
