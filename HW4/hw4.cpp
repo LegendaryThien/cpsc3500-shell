@@ -10,6 +10,9 @@
 #include <vector>
 #include <stdexcept>
 #include <semaphore.h>
+#include <stdarg.h>
+
+#define DEBUG 1
 
 // Helper function for thread sleep
 int pthread_sleep(int seconds) {
@@ -90,6 +93,18 @@ void check_pthread(int rc, const char* msg) {
     }
 }
 
+// Add this function after the includes
+void debug_print(const char* format, ...) {
+    if (DEBUG) {
+        va_list args;
+        va_start(args, format);
+        printf("[DEBUG] ");
+        vprintf(format, args);
+        printf("\n");
+        va_end(args);
+    }
+}
+
 // North-bound car thread function
 void* north_car_thread(void* arg) {
     CarInfo* car = static_cast<CarInfo*>(arg);
@@ -148,6 +163,8 @@ void* north_car_thread(void* arg) {
     
     // Release construction zone
     sem_post(&constructionZone);
+    
+    debug_print("Car %d (N) acquired construction zone", car->carID);
     
     pthread_exit(NULL);
 }
@@ -211,6 +228,8 @@ void* south_car_thread(void* arg) {
     // Release construction zone
     sem_post(&constructionZone);
     
+    debug_print("Car %d (S) acquired construction zone", car->carID);
+    
     pthread_exit(NULL);
 }
 
@@ -271,7 +290,7 @@ void* flagger_thread(void* arg) {
         sem_post(&southQueue);
         sem_post(&northQueue);
         
-        printf("Flagger allowing traffic from %c\n", current_direction);
+        debug_print("Flagger allowing traffic from %c", current_direction);
         
         // Signal cars in the current direction to proceed
         if (current_direction == 'N') {

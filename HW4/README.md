@@ -1,7 +1,7 @@
 # Traffic Management Simulation
 
 ## Team Members and Contributions
-- [Your Name] - Implemented the core simulation logic, thread management, and synchronization
+- Anh-Thien Nguyen - Implemented the core simulation logic, thread management, and synchronization
 
 ## Threads and Their Functions
 1. Main Thread
