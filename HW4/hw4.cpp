@@ -54,24 +54,20 @@ std::string getCurrentTime() {
     return std::string(buffer);
 }
 
-// Car thread function
-void* car_thread(void* arg) {
+// North-bound car thread function
+void* north_car_thread(void* arg) {
     CarInfo* car = (CarInfo*)arg;
     
     // Record arrival time
     car->arrivalTime = time(nullptr);
     
     // Car arrives
-    printf("Car %d arrived from %c\n", car->carID, car->direction);
+    printf("Car %d arrived from N\n", car->carID);
     
     pthread_mutex_lock(&road_mutex);
     
     // Increment waiting cars count
-    if (car->direction == 'N') {
-        cars_waiting_north++;
-    } else {
-        cars_waiting_south++;
-    }
+    cars_waiting_north++;
     
     // Wake up flagger if sleeping
     if (!flagger_awake) {
@@ -80,19 +76,15 @@ void* car_thread(void* arg) {
     }
     
     // Wait for permission to proceed
-    while (current_direction != car->direction) {
-        if (car->direction == 'N') {
-            pthread_cond_wait(&north_cond, &road_mutex);
-        } else {
-            pthread_cond_wait(&south_cond, &road_mutex);
-        }
+    while (current_direction != 'N') {
+        pthread_cond_wait(&north_cond, &road_mutex);
     }
     
     // Record start time
     car->startTime = time(nullptr);
     
     // Car passes
-    printf("Car %d passing from %c\n", car->carID, car->direction);
+    printf("Car %d passing from N\n", car->carID);
     sleep(1); // Simulate time to pass
     
     // Record end time
@@ -100,19 +92,68 @@ void* car_thread(void* arg) {
     
     // Log car event
     pthread_mutex_lock(&log_mutex);
-    car_log << car->carID << " " 
-            << car->direction << " "
+    car_log << car->carID << " N "
             << getCurrentTime() << " "
             << getCurrentTime() << " "
             << getCurrentTime() << std::endl;
     pthread_mutex_unlock(&log_mutex);
     
     // Decrement waiting cars count
-    if (car->direction == 'N') {
-        cars_waiting_north--;
-    } else {
-        cars_waiting_south--;
+    cars_waiting_north--;
+    
+    // Increment total cars passed
+    total_cars_passed++;
+    
+    pthread_mutex_unlock(&road_mutex);
+    pthread_exit(NULL);
+}
+
+// South-bound car thread function
+void* south_car_thread(void* arg) {
+    CarInfo* car = (CarInfo*)arg;
+    
+    // Record arrival time
+    car->arrivalTime = time(nullptr);
+    
+    // Car arrives
+    printf("Car %d arrived from S\n", car->carID);
+    
+    pthread_mutex_lock(&road_mutex);
+    
+    // Increment waiting cars count
+    cars_waiting_south++;
+    
+    // Wake up flagger if sleeping
+    if (!flagger_awake) {
+        flagger_awake = true;
+        pthread_cond_signal(&flagger_cond);
     }
+    
+    // Wait for permission to proceed
+    while (current_direction != 'S') {
+        pthread_cond_wait(&south_cond, &road_mutex);
+    }
+    
+    // Record start time
+    car->startTime = time(nullptr);
+    
+    // Car passes
+    printf("Car %d passing from S\n", car->carID);
+    sleep(1); // Simulate time to pass
+    
+    // Record end time
+    car->endTime = time(nullptr);
+    
+    // Log car event
+    pthread_mutex_lock(&log_mutex);
+    car_log << car->carID << " S "
+            << getCurrentTime() << " "
+            << getCurrentTime() << " "
+            << getCurrentTime() << std::endl;
+    pthread_mutex_unlock(&log_mutex);
+    
+    // Decrement waiting cars count
+    cars_waiting_south--;
     
     // Increment total cars passed
     total_cars_passed++;
@@ -233,7 +274,9 @@ int main(int argc, char* argv[]) {
     first_car->direction = 'N';  // Start with North direction
     
     pthread_t first_car_thread;
-    if (pthread_create(&first_car_thread, NULL, car_thread, first_car) != 0) {
+    if (pthread_create(&first_car_thread, NULL, 
+        (first_car->direction == 'N') ? north_car_thread : south_car_thread, 
+        first_car) != 0) {
         perror("Failed to create first car thread");
         return 1;
     }
@@ -249,7 +292,9 @@ int main(int argc, char* argv[]) {
             new_car->direction = (car_infos.back()->direction == 'N') ? 'S' : 'N';  // Alternate directions
             
             pthread_t new_car_thread;
-            if (pthread_create(&new_car_thread, NULL, car_thread, new_car) != 0) {
+            if (pthread_create(&new_car_thread, NULL, 
+                (new_car->direction == 'N') ? north_car_thread : south_car_thread, 
+                new_car) != 0) {
                 perror("Failed to create car thread");
                 break;
             }
