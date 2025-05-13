@@ -9,6 +9,7 @@
 #include <atomic>
 #include <vector>
 #include <stdexcept>
+#include <semaphore.h>
 
 // Helper function for thread sleep
 int pthread_sleep(int seconds) {
@@ -41,11 +42,13 @@ struct CarInfo {
 };
 
 // Synchronization primitives
-pthread_mutex_t road_mutex = PTHREAD_MUTEX_INITIALIZER;
+sem_t constructionZone;  // Controls access to construction zone
+sem_t northQueue;       // Controls access to north queue
+sem_t southQueue;       // Controls access to south queue
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Global variables
-bool flagger_awake = false;
 bool program_running = true;  // New flag to control program execution
 char current_direction = 'N';  // Default direction
 int cars_waiting_north = 0;
@@ -84,95 +87,82 @@ void check_pthread(int rc, const char* msg) {
 
 // North-bound car thread function
 void* north_car_thread(void* arg) {
-    CarInfo* car = nullptr;
-    try {
-        car = static_cast<CarInfo*>(arg);
-        if (!car) {
-            throw std::runtime_error("Invalid car info pointer");
-        }
-        
-        // Record arrival time
-        car->arrivalTime = time(nullptr);
-        
-        // Car arrives
-        printf("Car %d arrived from N\n", car->carID);
-        
-        check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
-        cars_waiting_north++;
-        flagger_awake = true;
-        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
-        
-        // Busy wait for permission to proceed
-        while (true) {
-            check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
-            if (current_direction == 'N') {
-                break;
-            }
-            check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
-            pthread_sleep(1);
-        }
-        
-        // Record start time
-        car->startTime = time(nullptr);
-        
-        // Car passes
-        printf("Car %d passing from N\n", car->carID);
-        sleep(1);
-        
-        // Record end time
-        car->endTime = time(nullptr);
-        
-        // Log car event
-        check_pthread(pthread_mutex_lock(&log_mutex), "Failed to lock log mutex");
-        car_log << car->carID << " N "
-                << getCurrentTime() << " "
-                << getCurrentTime() << " "
-                << getCurrentTime() << std::endl;
-        check_pthread(pthread_mutex_unlock(&log_mutex), "Failed to unlock log mutex");
-        
-        // Decrement waiting cars count
-        cars_waiting_north--;
-        total_cars_passed++;
-        
-        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
-    } catch (const std::exception& e) {
-        fprintf(stderr, "Error in north_car_thread: %s\n", e.what());
+    CarInfo* car = static_cast<CarInfo*>(arg);
+    if (!car) {
+        throw std::runtime_error("Invalid car info pointer");
     }
+    
+    // Record arrival time
+    car->arrivalTime = time(nullptr);
+    printf("Car %d arrived from N\n", car->carID);
+    
+    // Increment north queue counter
+    sem_wait(&northQueue);
+    cars_waiting_north++;
+    sem_post(&northQueue);
+    
+    // Wait for permission to enter construction zone
+    sem_wait(&constructionZone);
+    
+    // Record start time
+    car->startTime = time(nullptr);
+    printf("Car %d passing from N\n", car->carID);
+    
+    // Simulate passage through construction zone
+    pthread_sleep(1);
+    
+    // Record end time
+    car->endTime = time(nullptr);
+    
+    // Log car event
+    pthread_mutex_lock(&log_mutex);
+    car_log << car->carID << " N "
+            << getCurrentTime() << " "
+            << getCurrentTime() << " "
+            << getCurrentTime() << std::endl;
+    car_log.flush();
+    pthread_mutex_unlock(&log_mutex);
+    
+    // Decrement counters
+    sem_wait(&northQueue);
+    cars_waiting_north--;
+    sem_post(&northQueue);
+    
+    pthread_mutex_lock(&counter_mutex);
+    total_cars_passed++;
+    pthread_mutex_unlock(&counter_mutex);
+    
+    // Release construction zone
+    sem_post(&constructionZone);
     
     pthread_exit(NULL);
 }
 
 // South-bound car thread function
 void* south_car_thread(void* arg) {
-    CarInfo* car = (CarInfo*)arg;
+    CarInfo* car = static_cast<CarInfo*>(arg);
+    if (!car) {
+        throw std::runtime_error("Invalid car info pointer");
+    }
     
     // Record arrival time
     car->arrivalTime = time(nullptr);
-    
-    // Car arrives
     printf("Car %d arrived from S\n", car->carID);
     
-    pthread_mutex_lock(&road_mutex);
+    // Increment south queue counter
+    sem_wait(&southQueue);
     cars_waiting_south++;
-    flagger_awake = true;
-    pthread_mutex_unlock(&road_mutex);
+    sem_post(&southQueue);
     
-    // Busy wait for permission to proceed
-    while (true) {
-        pthread_mutex_lock(&road_mutex);
-        if (current_direction == 'S') {
-            break;
-        }
-        pthread_mutex_unlock(&road_mutex);
-        pthread_sleep(1); // Sleep for 1 second between checks
-    }
+    // Wait for permission to enter construction zone
+    sem_wait(&constructionZone);
     
     // Record start time
     car->startTime = time(nullptr);
-    
-    // Car passes
     printf("Car %d passing from S\n", car->carID);
-    sleep(1); // Simulate time to pass
+    
+    // Simulate passage through construction zone
+    pthread_sleep(1);
     
     // Record end time
     car->endTime = time(nullptr);
@@ -183,54 +173,63 @@ void* south_car_thread(void* arg) {
             << getCurrentTime() << " "
             << getCurrentTime() << " "
             << getCurrentTime() << std::endl;
+    car_log.flush();
     pthread_mutex_unlock(&log_mutex);
     
-    // Decrement waiting cars count
+    // Decrement counters
+    sem_wait(&southQueue);
     cars_waiting_south--;
-    total_cars_passed++;
+    sem_post(&southQueue);
     
-    pthread_mutex_unlock(&road_mutex);
+    pthread_mutex_lock(&counter_mutex);
+    total_cars_passed++;
+    pthread_mutex_unlock(&counter_mutex);
+    
+    // Release construction zone
+    sem_post(&constructionZone);
+    
     pthread_exit(NULL);
 }
 
 // Flagger thread function
 void* flagger_thread(void* arg) {
     while (program_running) {
-        pthread_mutex_lock(&road_mutex);
+        // Check if there are cars waiting
+        sem_wait(&northQueue);
+        sem_wait(&southQueue);
+        bool has_cars = (cars_waiting_north > 0 || cars_waiting_south > 0);
+        sem_post(&southQueue);
+        sem_post(&northQueue);
         
-        // Sleep if no cars waiting
-        if (cars_waiting_north == 0 && cars_waiting_south == 0) {
-            flagger_awake = false;
-            printf("Flagger is sleeping\n");
-            
+        if (!has_cars) {
             // Log sleep event
             pthread_mutex_lock(&log_mutex);
             flagger_log << getCurrentTime() << " sleep" << std::endl;
+            flagger_log.flush();
             pthread_mutex_unlock(&log_mutex);
             
-            pthread_mutex_unlock(&road_mutex);
-            
-            // Busy wait for cars
-            while (!flagger_awake && program_running) {
-                pthread_sleep(1); // Sleep for 1 second between checks
-            }
-            
-            if (!program_running) {
-                pthread_exit(NULL);
-            }
-            
-            pthread_mutex_lock(&road_mutex);
-            printf("Flagger woke up\n");
-            
-            // Log wake up event
-            pthread_mutex_lock(&log_mutex);
-            flagger_log << getCurrentTime() << " woken-up" << std::endl;
-            pthread_mutex_unlock(&log_mutex);
+            printf("Flagger is sleeping\n");
+            pthread_sleep(5);
+            continue;
         }
         
+        // Log wake up event
+        pthread_mutex_lock(&log_mutex);
+        flagger_log << getCurrentTime() << " woken-up" << std::endl;
+        flagger_log.flush();
+        pthread_mutex_unlock(&log_mutex);
+        
+        printf("Flagger woke up\n");
+        
         // Determine which direction to allow
-        if (cars_waiting_north > 0 && cars_waiting_south > 0) {
-            // Switch direction if cars waiting in both directions
+        sem_wait(&northQueue);
+        sem_wait(&southQueue);
+        
+        if (cars_waiting_north >= 10) {
+            current_direction = 'N';
+        } else if (cars_waiting_south >= 10) {
+            current_direction = 'S';
+        } else if (cars_waiting_north > 0 && cars_waiting_south > 0) {
             current_direction = (current_direction == 'N') ? 'S' : 'N';
         } else if (cars_waiting_north > 0) {
             current_direction = 'N';
@@ -238,10 +237,30 @@ void* flagger_thread(void* arg) {
             current_direction = 'S';
         }
         
+        sem_post(&southQueue);
+        sem_post(&northQueue);
+        
         printf("Flagger allowing traffic from %c\n", current_direction);
         
-        pthread_mutex_unlock(&road_mutex);
-        pthread_sleep(2); // Give time for cars to pass
+        // Signal cars in the current direction to proceed
+        if (current_direction == 'N') {
+            sem_post(&constructionZone);
+            pthread_sleep(2);  // Allow time for cars to pass
+            sem_wait(&constructionZone);
+        } else {
+            sem_post(&constructionZone);
+            pthread_sleep(2);  // Allow time for cars to pass
+            sem_wait(&constructionZone);
+        }
+
+        // Log going back to sleep
+        pthread_mutex_lock(&log_mutex);
+        flagger_log << getCurrentTime() << " sleep" << std::endl;
+        flagger_log.flush();
+        pthread_mutex_unlock(&log_mutex);
+        
+        printf("Flagger going back to sleep\n");
+        pthread_sleep(5);
     }
     
     pthread_exit(NULL);
@@ -271,6 +290,11 @@ int main(int argc, char* argv[]) {
         
         // Initialize log files with headers
         initialize_logs();
+        
+        // Initialize semaphores
+        sem_init(&constructionZone, 0, 1);  // Binary semaphore for construction zone
+        sem_init(&northQueue, 0, 1);        // Binary semaphore for north queue
+        sem_init(&southQueue, 0, 1);        // Binary semaphore for south queue
         
         // Create flagger thread
         check_pthread(pthread_create(&flagger, NULL, flagger_thread, NULL),
@@ -302,7 +326,8 @@ int main(int argc, char* argv[]) {
                 }
                 
                 new_car->carID = next_car_id++;
-                new_car->direction = (car_infos.back()->direction == 'N') ? 'S' : 'N';
+                // Randomly assign direction with 50% probability for each
+                new_car->direction = (dist(rng) < 0.5) ? 'N' : 'S';
                 
                 pthread_t new_car_thread;
                 check_pthread(pthread_create(&new_car_thread, NULL, 
@@ -313,11 +338,7 @@ int main(int argc, char* argv[]) {
                 car_infos.push_back(new_car);
             }
             
-            if (cars_waiting_north == 0 && cars_waiting_south == 0) {
-                pthread_sleep(5);
-            } else {
-                pthread_sleep(1);
-            }
+            pthread_sleep(1);
         }
         
         // Wait for all car threads to complete
@@ -327,13 +348,15 @@ int main(int argc, char* argv[]) {
         }
         
         // Signal flagger to exit
-        check_pthread(pthread_mutex_lock(&road_mutex), "Failed to lock road mutex");
         program_running = false;
-        flagger_awake = true;
-        check_pthread(pthread_mutex_unlock(&road_mutex), "Failed to unlock road mutex");
         
         // Wait for flagger thread to complete
         check_pthread(pthread_join(flagger, NULL), "Failed to join flagger thread");
+        
+        // Clean up semaphores
+        sem_destroy(&constructionZone);
+        sem_destroy(&northQueue);
+        sem_destroy(&southQueue);
         
         // Close and flush log files
         car_log.flush();
