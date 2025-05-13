@@ -316,10 +316,6 @@ void* flagger_thread(void* arg) {
     pthread_exit(NULL);
 }
 
-bool shouldCreateNextCar() {
-    return dist(rng) < 0.8;  // 80% chance
-}
-
 int main(int argc, char* argv[]) {
     try {
         // Check for command line argument
@@ -367,28 +363,41 @@ int main(int argc, char* argv[]) {
         car_threads.push_back(first_car_thread);
         car_infos.push_back(first_car);
         
-        // Keep creating cars with 80% probability until we reach target
+        bool in_burst = true;  // Track if we're in a burst
+        
+        // Keep creating cars until we reach target
         while (total_cars_passed < target_cars) {
-            if (shouldCreateNextCar()) {
-                CarInfo* new_car = new (std::nothrow) CarInfo();
-                if (!new_car) {
-                    throw std::runtime_error("Failed to allocate memory for new car");
+            if (in_burst) {
+                // 80% chance to continue the burst
+                if (dist(rng) < 0.8) {
+                    CarInfo* new_car = new (std::nothrow) CarInfo();
+                    if (!new_car) {
+                        throw std::runtime_error("Failed to allocate memory for new car");
+                    }
+                    
+                    new_car->carID = next_car_id++;
+                    // Randomly assign direction with 50% probability for each
+                    new_car->direction = (dist(rng) < 0.5) ? 'N' : 'S';
+                    
+                    pthread_t new_car_thread;
+                    check_pthread(pthread_create(&new_car_thread, NULL, 
+                        (new_car->direction == 'N') ? north_car_thread : south_car_thread, 
+                        new_car), "Failed to create car thread");
+                    
+                    car_threads.push_back(new_car_thread);
+                    car_infos.push_back(new_car);
+                } else {
+                    // Burst ended, wait 5 seconds before next burst
+                    in_burst = false;
+                    printf("Burst ended, waiting 5 seconds before next burst\n");
+                    pthread_sleep(5);
+                    in_burst = true;  // Start new burst
                 }
-                
-                new_car->carID = next_car_id++;
-                // Randomly assign direction with 50% probability for each
-                new_car->direction = (dist(rng) < 0.5) ? 'N' : 'S';
-                
-                pthread_t new_car_thread;
-                check_pthread(pthread_create(&new_car_thread, NULL, 
-                    (new_car->direction == 'N') ? north_car_thread : south_car_thread, 
-                    new_car), "Failed to create car thread");
-                
-                car_threads.push_back(new_car_thread);
-                car_infos.push_back(new_car);
+            } else {
+                // Not in burst, wait 5 seconds before starting new burst
+                pthread_sleep(5);
+                in_burst = true;
             }
-            
-            pthread_sleep(1);
         }
         
         // Wait for all car threads to complete
