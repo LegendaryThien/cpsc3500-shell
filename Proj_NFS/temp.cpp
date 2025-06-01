@@ -124,6 +124,25 @@ int main() {
     fs.ls();
     fs.home();
 
+    // Test 10: rm functionality
+    cout << "\nTest 10: Testing rm functionality" << endl;
+
+    // Test 10.1: Remove an existing file (should succeed)
+    cout << "\nTest 10.1: Removing file 'file1' (should succeed)" << endl;
+    fs.rm("file1");
+
+    // Test 10.2: Attempt to remove a non-existent file (should fail)
+    cout << "\nTest 10.2: Removing non-existent file 'nopefile' (should fail)" << endl;
+    fs.rm("nopefile");
+
+    // Test 10.3: Attempt to remove a directory using rm (should fail)
+    cout << "\nTest 10.3: Removing directory 'testdir' using rm (should fail)" << endl;
+    fs.rm("testdir");
+
+    // Test 10.4: List contents after removals
+    cout << "\nTest 10.4: Listing contents after removals" << endl;
+    fs.ls();
+
     // Unmount the file system
     fs.unmount();
     
