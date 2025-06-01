@@ -97,6 +97,33 @@ int main() {
     fs.rmdir("deep");
     fs.home();
 
+    // Test 9: create and ls functionality
+    cout << "\nTest 9: Testing create and ls functionality" << endl;
+
+    // Test 9.1: Create files in home directory
+    cout << "\nTest 9.1: Creating files 'file1', 'file2', 'file3' in home directory" << endl;
+    fs.create("file1");
+    fs.create("file2");
+    fs.create("file3");
+
+    // Test 9.2: List contents of home directory
+    cout << "\nTest 9.2: Listing contents of home directory" << endl;
+    fs.ls();
+
+    // Test 9.3: Attempt to create a file with duplicate name (should fail)" << endl;
+    fs.create("file1");
+
+    // Test 9.4: Attempt to create a file with a name that's too long (should fail)" << endl;
+    fs.create("thisfilenameistoolong");
+
+    // Test 9.5: Create and list in a nested directory
+    cout << "\nTest 9.5: Creating and listing in nested directory 'testdir/nested'" << endl;
+    fs.cd("testdir");
+    fs.cd("nested");
+    fs.create("nestedfile");
+    fs.ls();
+    fs.home();
+
     // Unmount the file system
     fs.unmount();
     

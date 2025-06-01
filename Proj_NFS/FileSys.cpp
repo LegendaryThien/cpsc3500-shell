@@ -175,11 +175,64 @@ void FileSys::rmdir(const char *name)
 // list the contents of current directory
 void FileSys::ls()
 {
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+  cout << "Directory contents:" << endl;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    cout << dir_block.dir_entries[i].name << endl;
+  }
 }
 
 // create an empty data file
 void FileSys::create(const char *name)
 {
+  // Check if name is too long
+  if (strlen(name) > MAX_FNAME_SIZE) {
+    cout << "Error: File name too long" << endl;
+    return;
+  }
+
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+
+  // Check if directory is full
+  if (dir_block.num_entries >= MAX_DIR_ENTRIES) {
+    cout << "Error: Directory is full" << endl;
+    return;
+  }
+
+  // Check if name already exists
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      cout << "Error: File or directory already exists" << endl;
+      return;
+    }
+  }
+
+  // Get a free block for the new file (inode)
+  short inode_block = bfs.get_free_block();
+  if (inode_block == 0) {
+    cout << "Error: Disk is full" << endl;
+    return;
+  }
+
+  // Initialize inode for empty file
+  struct inode_t inode;
+  inode.magic = INODE_MAGIC_NUM;
+  inode.size = 0;
+  for (int i = 0; i < MAX_DATA_BLOCKS; i++) {
+    inode.blocks[i] = 0;
+  }
+  bfs.write_block(inode_block, (void *)&inode);
+
+  // Add entry to current directory
+  strcpy(dir_block.dir_entries[dir_block.num_entries].name, name);
+  dir_block.dir_entries[dir_block.num_entries].block_num = inode_block;
+  dir_block.num_entries++;
+  bfs.write_block(curr_dir, (void *)&dir_block);
+
+  cout << "File created successfully" << endl;
 }
 
 // append data to a data file
