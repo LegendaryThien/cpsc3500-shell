@@ -319,11 +319,108 @@ void FileSys::append(const char *name, const char *data)
 // display the contents of a data file
 void FileSys::cat(const char *name)
 {
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+
+  // Find the file entry
+  int entry_index = -1;
+  short inode_block_num = 0;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      entry_index = i;
+      inode_block_num = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (entry_index == -1) {
+    cout << "Error: File not found" << endl;
+    return;
+  }
+
+  // Read the inode block and check if it's a file
+  struct inode_t inode;
+  bfs.read_block(inode_block_num, (void *)&inode);
+  if (inode.magic != INODE_MAGIC_NUM) {
+    cout << "Error: Not a file" << endl;
+    return;
+  }
+
+  // Display the contents of the file
+  int remaining_bytes = inode.size;
+  int current_block = 0;
+  struct datablock_t data_block;
+
+  while (remaining_bytes > 0) {
+    if (inode.blocks[current_block] == 0) {
+      break;
+    }
+
+    bfs.read_block(inode.blocks[current_block], (void *)&data_block);
+    int bytes_to_read = (remaining_bytes < BLOCK_SIZE) ? remaining_bytes : BLOCK_SIZE;
+    
+    // Write the data to stdout
+    write(1, data_block.data, bytes_to_read);
+    
+    remaining_bytes -= bytes_to_read;
+    current_block++;
+  }
+  cout << endl;
 }
 
 // display the first N bytes of the file
 void FileSys::head(const char *name, unsigned int n)
 {
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+
+  // Find the file entry
+  int entry_index = -1;
+  short inode_block_num = 0;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      entry_index = i;
+      inode_block_num = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (entry_index == -1) {
+    cout << "Error: File not found" << endl;
+    return;
+  }
+
+  // Read the inode block and check if it's a file
+  struct inode_t inode;
+  bfs.read_block(inode_block_num, (void *)&inode);
+  if (inode.magic != INODE_MAGIC_NUM) {
+    cout << "Error: Not a file" << endl;
+    return;
+  }
+
+  // Display the first N bytes of the file
+  int bytes_to_read = (n < inode.size) ? n : inode.size;
+  int remaining_bytes = bytes_to_read;
+  int current_block = 0;
+  struct datablock_t data_block;
+
+  while (remaining_bytes > 0) {
+    if (inode.blocks[current_block] == 0) {
+      break;
+    }
+
+    bfs.read_block(inode.blocks[current_block], (void *)&data_block);
+    int block_bytes = (remaining_bytes < BLOCK_SIZE) ? remaining_bytes : BLOCK_SIZE;
+    
+    // Write the data to stdout
+    write(1, data_block.data, block_bytes);
+    
+    remaining_bytes -= block_bytes;
+    current_block++;
+  }
+  cout << endl;
 }
 
 // delete a data file
@@ -380,6 +477,54 @@ void FileSys::rm(const char *name)
 // display stats about file or directory
 void FileSys::stat(const char *name)
 {
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+
+  // Find the entry
+  int entry_index = -1;
+  short block_num = 0;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      entry_index = i;
+      block_num = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (entry_index == -1) {
+    cout << "Error: File or directory not found" << endl;
+    return;
+  }
+
+  // Read the block and determine if it's a file or directory
+  char block[BLOCK_SIZE];
+  bfs.read_block(block_num, block);
+
+  // Check magic number to determine type
+  if (*(int *)block == DIR_MAGIC_NUM) {
+    // It's a directory
+    struct dirblock_t *dir = (struct dirblock_t *)block;
+    cout << "Directory Name: " << name << endl;
+    cout << "Block Number: " << block_num << endl;
+    cout << "Number of Entries: " << dir->num_entries << endl;
+  } else if (*(int *)block == INODE_MAGIC_NUM) {
+    // It's a file
+    struct inode_t *inode = (struct inode_t *)block;
+    cout << "File Name: " << name << endl;
+    cout << "Block Number: " << block_num << endl;
+    cout << "File Size: " << inode->size << " bytes" << endl;
+    cout << "Number of Blocks: ";
+    int block_count = 0;
+    for (int i = 0; i < MAX_DATA_BLOCKS; i++) {
+      if (inode->blocks[i] != 0) {
+        block_count++;
+      }
+    }
+    cout << block_count << endl;
+  } else {
+    cout << "Error: Invalid block type" << endl;
+  }
 }
 
 // HELPER FUNCTIONS (optional)

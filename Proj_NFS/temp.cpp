@@ -171,6 +171,45 @@ int main() {
     cout << "\nTest 11.5: Listing contents after appending" << endl;
     fs.ls();
 
+    // Test 12: stat, cat, and head functionality
+    cout << "\nTest 12: Testing stat, cat, and head functionality" << endl;
+
+    // Test 12.1: Get stats for a file
+    cout << "\nTest 12.1: Getting stats for file 'file2'" << endl;
+    fs.stat("file2");
+
+    // Test 12.2: Get stats for a directory
+    cout << "\nTest 12.2: Getting stats for directory 'testdir'" << endl;
+    fs.stat("testdir");
+
+    // Test 12.3: Get stats for non-existent entry
+    cout << "\nTest 12.3: Getting stats for non-existent entry 'nope'" << endl;
+    fs.stat("nope");
+
+    // Test 12.4: Display contents of a file
+    cout << "\nTest 12.4: Displaying contents of file 'file2'" << endl;
+    fs.cat("file2");
+
+    // Test 12.5: Attempt to cat a non-existent file
+    cout << "\nTest 12.5: Attempting to cat non-existent file 'nope'" << endl;
+    fs.cat("nope");
+
+    // Test 12.6: Attempt to cat a directory
+    cout << "\nTest 12.6: Attempting to cat directory 'testdir'" << endl;
+    fs.cat("testdir");
+
+    // Test 12.7: Display first 5 bytes of a file
+    cout << "\nTest 12.7: Displaying first 5 bytes of file 'file2'" << endl;
+    fs.head("file2", 5);
+
+    // Test 12.8: Display first 100 bytes of a file (more than file size)
+    cout << "\nTest 12.8: Displaying first 100 bytes of file 'file2'" << endl;
+    fs.head("file2", 100);
+
+    // Test 12.9: Attempt to head a non-existent file
+    cout << "\nTest 12.9: Attempting to head non-existent file 'nope'" << endl;
+    fs.head("nope", 10);
+
     // Unmount the file system
     fs.unmount();
     
