@@ -78,10 +78,48 @@ void FileSys::mkdir(const char *name)
 // switch to a directory
 void FileSys::cd(const char *name)
 {
+  cout << "Attempting to change to directory: " << name << endl;
+  
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *) &dir_block);
+
+  // Check if directory exists
+  bool found = false;
+  short target_block = 0;
+  
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      found = true;
+      target_block = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (!found) {
+    cout << "Error: Directory not found" << endl;
+    return;
+  }
+
+  // Verify that target is a directory
+  struct dirblock_t target_dir;
+  bfs.read_block(target_block, (void *) &target_dir);
+  
+  if (target_dir.magic != DIR_MAGIC_NUM) {
+    cout << "Error: Not a directory" << endl;
+    return;
+  }
+
+  // Change to the new directory
+  curr_dir = target_block;
+  cout << "Successfully changed to directory: " << name << endl;
 }
 
 // switch to home directory
 void FileSys::home() {
+  cout << "Changing to home directory" << endl;
+  curr_dir = 1; // Home directory is always block 1
+  cout << "Successfully changed to home directory" << endl;
 }
 
 // remove a directory
