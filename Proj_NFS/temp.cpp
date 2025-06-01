@@ -143,6 +143,34 @@ int main() {
     cout << "\nTest 10.4: Listing contents after removals" << endl;
     fs.ls();
 
+    // Test 11: append functionality
+    cout << "\nTest 11: Testing append functionality" << endl;
+
+    // Test 11.1: Append data to an existing file
+    cout << "\nTest 11.1: Appending data to 'file2'" << endl;
+    fs.append("file2", "Hello, World!");
+
+    // Test 11.2: Attempt to append to a non-existent file
+    cout << "\nTest 11.2: Appending to non-existent file 'nopefile'" << endl;
+    fs.append("nopefile", "This should fail");
+
+    // Test 11.3: Attempt to append to a directory
+    cout << "\nTest 11.3: Appending to directory 'testdir'" << endl;
+    fs.append("testdir", "This should fail");
+
+    // Test 11.4: Append data that spans multiple blocks
+    cout << "\nTest 11.4: Appending large data to 'file3'" << endl;
+    char large_data[256];
+    for (int i = 0; i < 255; i++) {
+        large_data[i] = 'A';
+    }
+    large_data[255] = '\0';
+    fs.append("file3", large_data);
+
+    // Test 11.5: List contents after appending
+    cout << "\nTest 11.5: Listing contents after appending" << endl;
+    fs.ls();
+
     // Unmount the file system
     fs.unmount();
     

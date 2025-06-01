@@ -238,6 +238,82 @@ void FileSys::create(const char *name)
 // append data to a data file
 void FileSys::append(const char *name, const char *data)
 {
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *)&dir_block);
+
+  // Find the file entry
+  int entry_index = -1;
+  short inode_block_num = 0;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      entry_index = i;
+      inode_block_num = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (entry_index == -1) {
+    cout << "Error: File not found" << endl;
+    return;
+  }
+
+  // Read the inode block and check if it's a file
+  struct inode_t inode;
+  bfs.read_block(inode_block_num, (void *)&inode);
+  if (inode.magic != INODE_MAGIC_NUM) {
+    cout << "Error: Not a file" << endl;
+    return;
+  }
+
+  // Calculate the size of the data to append
+  int data_size = strlen(data);
+  if (data_size == 0) {
+    cout << "Error: No data to append" << endl;
+    return;
+  }
+
+  // Check if the file is already at maximum size
+  if (inode.size >= MAX_FILE_SIZE) {
+    cout << "Error: File is at maximum size" << endl;
+    return;
+  }
+
+  // Find the last block or allocate a new one if the file is empty
+  short last_block = 0;
+  if (inode.size > 0) {
+    int last_block_index = (inode.size - 1) / BLOCK_SIZE;
+    last_block = inode.blocks[last_block_index];
+  }
+
+  // If the file is empty or the last block is full, allocate a new block
+  if (last_block == 0 || (inode.size % BLOCK_SIZE) == 0) {
+    last_block = bfs.get_free_block();
+    if (last_block == 0) {
+      cout << "Error: Disk is full" << endl;
+      return;
+    }
+    inode.blocks[inode.size / BLOCK_SIZE] = last_block;
+  }
+
+  // Read the last block
+  struct datablock_t data_block;
+  bfs.read_block(last_block, (void *)&data_block);
+
+  // Calculate the offset in the last block
+  int offset = inode.size % BLOCK_SIZE;
+  int remaining_space = BLOCK_SIZE - offset;
+
+  // Append data to the last block
+  int bytes_to_write = (data_size < remaining_space) ? data_size : remaining_space;
+  memcpy(data_block.data + offset, data, bytes_to_write);
+  bfs.write_block(last_block, (void *)&data_block);
+
+  // Update the inode size
+  inode.size += bytes_to_write;
+  bfs.write_block(inode_block_num, (void *)&inode);
+
+  cout << "Data appended successfully" << endl;
 }
 
 // display the contents of a data file
