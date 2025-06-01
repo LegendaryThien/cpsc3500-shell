@@ -125,6 +125,51 @@ void FileSys::home() {
 // remove a directory
 void FileSys::rmdir(const char *name)
 {
+  // Read current directory block
+  struct dirblock_t dir_block;
+  bfs.read_block(curr_dir, (void *) &dir_block);
+
+  // Find the directory entry
+  int entry_index = -1;
+  short dir_block_num = 0;
+  for (int i = 0; i < dir_block.num_entries; i++) {
+    if (strcmp(dir_block.dir_entries[i].name, name) == 0) {
+      entry_index = i;
+      dir_block_num = dir_block.dir_entries[i].block_num;
+      break;
+    }
+  }
+
+  if (entry_index == -1) {
+    cout << "Error: Directory not found" << endl;
+    return;
+  }
+
+  // Read the target block and check if it's a directory
+  struct dirblock_t target_dir;
+  bfs.read_block(dir_block_num, (void *)&target_dir);
+  if (target_dir.magic != DIR_MAGIC_NUM) {
+    cout << "Error: Not a directory" << endl;
+    return;
+  }
+
+  // Check if the directory is empty
+  if (target_dir.num_entries > 0) {
+    cout << "Error: Directory not empty" << endl;
+    return;
+  }
+
+  // Remove the entry from the current directory
+  for (int i = entry_index; i < dir_block.num_entries - 1; i++) {
+    dir_block.dir_entries[i] = dir_block.dir_entries[i + 1];
+  }
+  dir_block.num_entries--;
+  bfs.write_block(curr_dir, (void *)&dir_block);
+
+  // Free the directory block
+  bfs.reclaim_block(dir_block_num);
+
+  cout << "Directory removed successfully" << endl;
 }
 
 // list the contents of current directory

@@ -74,7 +74,29 @@ int main() {
     // Test 7.3: Go home again
     cout << "\nTest 7.3: Going home again" << endl;
     fs.home();
-    
+
+    // Test 8: rmdir functionality
+    cout << "\nTest 8: Testing rmdir functionality" << endl;
+
+    // Test 8.1: Remove an empty directory (should succeed)
+    cout << "\nTest 8.1: Removing empty directory 'dir1' (should succeed)" << endl;
+    fs.rmdir("dir1");
+
+    // Test 8.2: Try to remove a non-existent directory (should fail)
+    cout << "\nTest 8.2: Removing non-existent directory 'nope' (should fail)" << endl;
+    fs.rmdir("nope");
+
+    // Test 8.3: Try to remove a non-empty directory (should fail)
+    cout << "\nTest 8.3: Removing non-empty directory 'testdir' (should fail)" << endl;
+    fs.rmdir("testdir");
+
+    // Test 8.4: Remove a nested empty directory (should succeed)
+    cout << "\nTest 8.4: Removing nested empty directory 'deep' (should succeed)" << endl;
+    fs.cd("testdir");
+    fs.cd("nested");
+    fs.rmdir("deep");
+    fs.home();
+
     // Unmount the file system
     fs.unmount();
     
