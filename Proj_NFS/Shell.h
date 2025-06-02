@@ -15,8 +15,7 @@ class Shell {
 
   public:
     //constructor, do not change it!!
-    Shell() : cs_sock(-1), is_mounted(false) {   
-    }
+    Shell(); // Declaration only, implementation in Shell.cpp
 
     // Mount a network file system located in host:port, set is_mounted = true if success
     void mountNFS(string fs_loc);  //fs_loc must be in the format of server:port

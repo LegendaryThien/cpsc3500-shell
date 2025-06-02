@@ -1,13 +1,13 @@
-// CPSC 3500: Shell
-// Implements a basic shell (command line interface) for the file system
-
+// Shell.cpp
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <algorithm> // For std::find, if needed (not strictly used for parsing here, but good for string ops)
+#include <algorithm> // For std::min
 #include <cstring>   // For memset, bcopy
-#include <cstdlib>   // For stoi (string to int)
+#include <cstdlib>   // For stoi (string to int), strtoul
 #include <stdexcept> // For std::invalid_argument, std::out_of_range
+#include <errno.h>   // For errno
+#include <vector>    // Added for std::vector
 
 // Include necessary networking headers explicitly
 #include <sys/types.h>
@@ -20,12 +20,122 @@ using namespace std;
 
 #include "Shell.h"
 
-static const string PROMPT_STRING = "NFS> ";	// shell prompt
+static const string PROMPT_STRING = "NFS> ";  // shell prompt
+
+// Helper to send all data in a buffer (handles partial sends)
+ssize_t shell_send_all(int sockfd, const char *buf, size_t len) {
+    size_t total = 0; // how many bytes we've sent
+    size_t bytesleft = len; // how many we have left to send
+    ssize_t n;
+
+    while(total < len) {
+        n = send(sockfd, buf + total, bytesleft, 0);
+        if (n == -1) { break; }
+        total += n;
+        bytesleft -= n;
+    }
+    return n == -1 ? -1 : total; // return -1 on failure, total bytes sent on success
+}
+
+// Helper to receive a response and parse it
+// Returns true on success, false on error or disconnection.
+bool receive_and_parse_response(int sockfd, int &status_code, string &status_message, string &body_content) {
+    // Clear previous content
+    status_code = -1;
+    status_message.clear();
+    body_content.clear();
+
+    string received_data_buffer;
+    char temp_buffer[1024]; // Temporary buffer for reading
+    ssize_t bytes_read;
+    size_t header_end_pos = string::npos;
+
+    // Phase 1: Read data until we find "\r\n\r\n" which marks end of headers
+    while (header_end_pos == string::npos) {
+        bytes_read = recv(sockfd, temp_buffer, sizeof(temp_buffer) - 1, 0);
+        if (bytes_read <= 0) { // 0 means connection closed, <0 means error
+            if (bytes_read == 0) {
+                cerr << "Server disconnected unexpectedly." << endl;
+            } else {
+                cerr << "Error receiving data from server: " << strerror(errno) << endl;
+            }
+            return false;
+        }
+        temp_buffer[bytes_read] = '\0';
+        received_data_buffer += temp_buffer;
+
+        header_end_pos = received_data_buffer.find("\r\n\r\n");
+    }
+
+    // Extract headers string and initial part of body
+    string headers_str = received_data_buffer.substr(0, header_end_pos);
+    body_content = received_data_buffer.substr(header_end_pos + 4); // +4 to skip "\r\n\r\n"
+
+    // Parse headers
+    stringstream header_ss(headers_str);
+    string line;
+
+    // Line 1: Status_code Status_message
+    if (getline(header_ss, line, '\r')) { // Read until \r
+        header_ss.ignore(1); // Ignore the \n
+        stringstream status_line_ss(line);
+        status_line_ss >> status_code; // Read status code
+        // Read rest of line for message, removing leading space
+        getline(status_line_ss, status_message);
+        if (!status_message.empty() && status_message[0] == ' ') {
+            status_message = status_message.substr(1);
+        }
+    } else {
+        cerr << "Error parsing status line." << endl;
+        return false;
+    }
+
+    // Line 2: Length:size_in_bytes
+    int expected_body_length = 0;
+    if (getline(header_ss, line, '\r')) { // Read until \r
+        header_ss.ignore(1); // Ignore the \n
+        size_t length_prefix_pos = line.find("Length:");
+        if (length_prefix_pos != string::npos) {
+            try {
+                expected_body_length = stoi(line.substr(length_prefix_pos + 7));
+            } catch (const std::exception& e) {
+                cerr << "Error parsing body length: " << e.what() << endl;
+                return false;
+            }
+        } else {
+            cerr << "Error: 'Length:' header not found." << endl;
+            return false;
+        }
+    } else {
+        cerr << "Error parsing length line." << endl;
+        return false;
+    }
+
+    // Phase 2: Read remaining body content if necessary
+    int current_body_read_len = body_content.length();
+    int remaining_body_to_read = expected_body_length - current_body_read_len;
+
+    vector<char> dynamic_body_buffer(remaining_body_to_read + 1); // For remaining body
+    while (remaining_body_to_read > 0) {
+        bytes_read = recv(sockfd, dynamic_body_buffer.data(), remaining_body_to_read, 0);
+        if (bytes_read <= 0) {
+            cerr << "Error or connection closed while receiving remaining body." << endl;
+            return false;
+        }
+        body_content.append(dynamic_body_buffer.data(), bytes_read); // Append bytes to string
+        remaining_body_to_read -= bytes_read;
+    }
+
+    return true; // Successfully received and parsed response
+}
+
+
+// Shell constructor, do not change it!!
+Shell::Shell() : cs_sock(-1), is_mounted(false) {
+}
 
 // Mount the network file system with server name and port number in the format of server:port
 void Shell::mountNFS(string fs_loc) {
-    // fs_loc is in the format "server:port" [cite: 34]
-
     // 1. Parse server name and port from fs_loc
     size_t colon_pos = fs_loc.find(':');
     if (colon_pos == string::npos) {
@@ -46,9 +156,7 @@ void Shell::mountNFS(string fs_loc) {
         return;
     }
 
-
     // 2. Create TCP socket
-    // AF_INET for IPv4, SOCK_STREAM for TCP, 0 for default protocol
     cs_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (cs_sock < 0) {
         cerr << "Error creating client socket\n";
@@ -68,9 +176,6 @@ void Shell::mountNFS(string fs_loc) {
     struct sockaddr_in server_address;
     memset(&server_address, 0, sizeof(server_address)); // Zero out the structure
     server_address.sin_family = AF_INET; // IPv4
-    // bcopy is part of <strings.h> on some systems, but memcpy from <cstring> is more portable.
-    // However, the assignment's context often implies BSD sockets, so bcopy might be fine on the target system.
-    // For maximum portability, one might use: memcpy(&server_address.sin_addr, server->h_addr, server->h_length);
     bcopy((char *)server->h_addr,
           (char *)&server_address.sin_addr.s_addr,
           server->h_length); // Copy IP address
@@ -84,14 +189,14 @@ void Shell::mountNFS(string fs_loc) {
         return;
     }
 
-    // If all operations are completed successfully, set is_mounted to true [cite: 34]
+    // If all operations are completed successfully, set is_mounted to true
     is_mounted = true;
     cout << "NFS mounted successfully to " << fs_loc << endl;
 }
 
 // Unmount the network file system if it was mounted
 void Shell::unmountNFS() {
-    // close the socket if it was mounted [cite: 34]
+    // close the socket if it was mounted
     if (is_mounted) {
         close(cs_sock); // Close the client socket
         cs_sock = -1;   // Invalidate the socket descriptor
@@ -105,67 +210,322 @@ void Shell::unmountNFS() {
 // Remote procedure call on mkdir
 void Shell::mkdir_rpc(string dname) {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "mkdir_rpc: Not implemented yet." << endl;
+  // Construct and send the command
+  string command = "mkdir " + dname + "\r\n";
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending mkdir command to server.\n";
+    return;
+  }
+
+  // Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content;
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // Display the message
+  if (status_code == 200) {
+      cout << status_message << endl; // Success message is usually in status_message
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procedure call on cd
 void Shell::cd_rpc(string dname) {
-  if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "cd_rpc: Not implemented yet." << endl;
+    if (!is_mounted) {
+        cout << "Error: NFS not mounted." << endl;
+        return;
+    }
+
+    // 1. Construct and send the command
+    string command = "cd " + dname + "\r\n"; // Client to Server Request Message Format
+    if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+        cerr << "Error sending cd command to server.\n";
+        return;
+    }
+
+    // 2. Receive and parse the server's response
+    int status_code;
+    string status_message;
+    string body_content; // cd usually has no body, but parse for consistency
+
+    if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+        return; // Error message already printed by helper
+    }
+
+    // 3. Display the message
+    if (status_code == 200) {
+        cout << status_message << endl; // For cd, success message is "OK"
+    } else {
+        cout << status_code << " " << status_message << endl;
+    }
 }
+
 
 // Remote procedure call on home
 void Shell::home_rpc() {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "home_rpc: Not implemented yet." << endl;
+
+  // 1. Construct and send the command
+  string command = "home\r\n"; // "home" command has no arguments
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending home command to server.\n";
+    return;
+  }
+
+  // 2. Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content; // home command usually has no body
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // 3. Display the message
+  if (status_code == 200) {
+      cout << status_message << endl; // For home, success message is "OK"
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procedure call on rmdir
 void Shell::rmdir_rpc(string dname) {
-  if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "rmdir_rpc: Not implemented yet." << endl;
+    if (!is_mounted) {
+        cout << "Error: NFS not mounted." << endl;
+        return;
+    }
+
+    // 1. Construct and send the command: "rmdir <dname>\r\n"
+    string command = "rmdir " + dname + "\r\n";
+    if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+        cerr << "Error sending rmdir command to server.\n";
+        return;
+    }
+
+    // 2. Receive and parse the server's response
+    int status_code;
+    string status_message;
+    string body_content; // rmdir typically has no body, but parse for consistency
+
+    if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+        return; // Error message already printed by helper
+    }
+
+    // 3. Display the message
+    if (status_code == 200) {
+        cout << status_message << endl; // Success message is "OK"
+    } else {
+        cout << status_code << " " << status_message << endl;
+    }
 }
 
 // Remote procedure call on ls
 void Shell::ls_rpc() {
-  if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "ls_rpc: Not implemented yet." << endl;
+    if (!is_mounted) {
+        cout << "Error: NFS not mounted." << endl;
+        return;
+    }
+
+    // 1. Construct and send the command
+    string command = "ls\r\n"; // Client to Server Request Message Format
+    if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+        cerr << "Error sending ls command to server.\n";
+        return;
+    }
+
+    // 2. Receive and parse the server's response
+    int status_code;
+    string status_message;
+    string body_content;
+
+    if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+        // Error message already printed by receive_and_parse_response
+        return;
+    }
+
+    // 3. Display the message
+    if (status_code == 200) { // OK status
+        cout << body_content << endl; // Print the message body (directory contents)
+    } else { // Error status
+        cout << status_code << " " << status_message << endl;
+    }
 }
 
 // Remote procedure call on create
 void Shell::create_rpc(string fname) {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "create_rpc: Not implemented yet." << endl;
+
+  // 1. Construct and send the command: "create <fname>\r\n"
+  string command = "create " + fname + "\r\n";
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending create command to server.\n";
+    return;
+  }
+
+  // 2. Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content; // create typically has no body
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // 3. Display the message
+  if (status_code == 200) {
+      cout << status_message << endl; // Success message is "OK"
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procedure call on append
 void Shell::append_rpc(string fname, string data) {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "append_rpc: Not implemented yet." << endl;
+  // Construct and send the command: "append <filename> <data>\r\n"
+  string command = "append " + fname + " " + data + "\r\n";
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending append command to server.\n";
+    return;
+  }
+
+  // Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content; // append typically has no body
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // Display the message
+  if (status_code == 200) {
+      cout << status_message << endl; // Success message is "OK"
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procesure call on cat
 void Shell::cat_rpc(string fname) {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "cat_rpc: Not implemented yet." << endl;
+  // Construct and send the command: "cat <filename>\r\n"
+  string command = "cat " + fname + "\r\n";
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending cat command to server.\n";
+    return;
+  }
+
+  // Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content;
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // Display the message
+  if (status_code == 200) {
+      cout << body_content; // cat body includes trailing newline, so no endl here
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procedure call on head
 void Shell::head_rpc(string fname, int n) { // Note: 'n' is int here, but unsigned int in requirements
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "head_rpc: Not implemented yet." << endl;
+  // Construct and send the command: "head <filename> <n>\r\n"
+  string command = "head " + fname + " " + to_string(n) + "\r\n";
+  if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+    cerr << "Error sending head command to server.\n";
+    return;
+  }
+
+  // Receive and parse the server's response
+  int status_code;
+  string status_message;
+  string body_content;
+
+  if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+      return; // Error message already printed by helper
+  }
+
+  // Display the message
+  if (status_code == 200) {
+      cout << body_content; // head body includes trailing newline, so no endl here
+  } else {
+      cout << status_code << " " << status_message << endl;
+  }
 }
 
 // Remote procedure call on rm
 void Shell::rm_rpc(string fname) {
-  if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "rm_rpc: Not implemented yet." << endl;
+    if (!is_mounted) {
+        cout << "Error: NFS not mounted." << endl;
+        return;
+    }
+
+    // 1. Construct and send the command: "rm <filename>\r\n"
+    string command = "rm " + fname + "\r\n";
+    if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+        cerr << "Error sending rm command to server.\n";
+        return;
+    }
+
+    // 2. Receive and parse the server's response
+    int status_code;
+    string status_message;
+    string body_content; // rm typically has no body
+
+    if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+        return; // Error message already printed by helper
+    }
+
+    // 3. Display the message
+    if (status_code == 200) {
+        cout << status_message << endl; // Success message is "OK"
+    } else {
+        cout << status_code << " " << status_message << endl;
+    }
 }
 
 // Remote procedure call on stat
 void Shell::stat_rpc(string fname) {
-  if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
-  cout << "stat_rpc: Not implemented yet." << endl;
+    if (!is_mounted) {
+        cout << "Error: NFS not mounted." << endl;
+        return;
+    }
+
+    // 1. Construct and send the command: "stat <name>\r\n"
+    string command = "stat " + fname + "\r\n";
+    if (shell_send_all(cs_sock, command.c_str(), command.length()) == -1) {
+        cerr << "Error sending stat command to server.\n";
+        return;
+    }
+
+    // 2. Receive and parse the server's response
+    int status_code;
+    string status_message;
+    string body_content;
+
+    if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
+        return; // Error message already printed by helper
+    }
+
+    // 3. Display the message
+    if (status_code == 200) {
+        cout << body_content << endl; // stat output is the body, needs a final endl
+    } else {
+        cout << status_code << " " << status_message << endl;
+    }
 }
 
 
@@ -260,11 +620,8 @@ bool Shell::execute_command(string command_str)
   }
   else if (command.name == "head") {
     errno = 0;
-    // Changed to stoul to match head_rpc parameter type (unsigned int)
     unsigned long n = strtoul(command.append_data.c_str(), NULL, 0);
     if (0 == errno) {
-      // Cast to int for head_rpc, assuming it fits.
-      // If n can exceed int max, head_rpc signature should be unsigned int.
       head_rpc(command.file_name, (int)n);
     } else {
       cerr << "Invalid command line: " << command.append_data;
@@ -303,7 +660,7 @@ Shell::Command Shell::parse_command(string command_str)
       if (ss >> command.append_data) {
         num_tokens++;
         string junk;
-        if (ss >> junk) {
+        if (ss >> junk) { // Check for extra tokens
           num_tokens++;
         }
       }
