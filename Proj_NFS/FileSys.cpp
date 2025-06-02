@@ -11,8 +11,8 @@
 using namespace std;
 
 #include "FileSys.h"
-#include "BasicFileSys.h" // Already included via FileSys.h now
-#include "Blocks.h"       // Already included via FileSys.h now
+#include "BasicFileSys.h" // Included via FileSys.h now
+#include "Blocks.h"       // Included via FileSys.h now
 
 // Constructor
 FileSys::FileSys() : bfs(), curr_dir(1), fs_sock(-1) {
@@ -122,7 +122,9 @@ string FileSys::ls()
         }
     }
   }
-  return "200 OK\n" + ss.str(); // "200 OK" is status, rest is message body
+  // The assignment example for ls success just shows the content, no "200 OK"
+  // So, return "200 OK\n" followed by the content. Shell.cpp will handle printing.
+  return "200 OK\n" + ss.str();
 }
 
 // switch to a directory
@@ -543,7 +545,8 @@ string FileSys::stat(const char *name)
   if (magic == DIR_MAGIC_NUM) {
     // It's a directory
     // Format: Directory name: foo/Directory block: 7
-    ss << "Directory name: " << name << "/" << "\n";
+    // Note: Assignment's stat example for directory name does NOT have a trailing slash
+    ss << "Directory name: " << name << "\n"; // Removed the trailing slash here
     ss << "Directory block: " << block_num;
   } else if (magic == INODE_MAGIC_NUM) {
     // It's a file

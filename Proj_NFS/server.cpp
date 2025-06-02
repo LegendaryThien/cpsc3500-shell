@@ -141,15 +141,18 @@ int main(int argc, char* argv[]) {
             fs_raw_response = fs.cd(arg1.c_str());
         } else if (command_name == "home") {
             fs_raw_response = fs.home();
-        } else if (command_name == "rmdir") { // <--- ADDED rmdir HANDLING
+        } else if (command_name == "rmdir") {
             fs_raw_response = fs.rmdir(arg1.c_str());
         } else if (command_name == "create") {
             fs_raw_response = fs.create(arg1.c_str());
         } else if (command_name == "append") {
-            // Reconstruct data as it might contain spaces
+            // Reconstruct data as it might contain spaces in the assignment's format,
+            // though the example shows no spaces in 'data' itself.
+            // If data can have spaces, it should be passed as a single argument
+            // or encoded. For now, assume arg2 is the full data, or append subsequent words.
             string data_to_append = arg2;
             string temp_arg;
-            while (ss >> temp_arg) {
+            while (ss >> temp_arg) { // This loop handles if data_to_append has multiple space-separated words
                 data_to_append += " " + temp_arg;
             }
             fs_raw_response = fs.append(arg1.c_str(), data_to_append.c_str());
@@ -181,11 +184,12 @@ int main(int argc, char* argv[]) {
         string body_from_fs;
 
         getline(fs_response_ss, status_line_from_fs); // Read the first line (e.g., "200 OK")
-        // Read the rest as body (getline with no delimiter reads until end, or you can use .str() directly on remaining ss)
-        body_from_fs = fs_response_ss.str();
+        // Read the rest as body
+        // If there's a second line, it's the body. If not, body is empty.
+        // The behavior of getline on an empty stream (after first line read) is fine.
+        getline(fs_response_ss, body_from_fs, '\0'); // Read till null terminator if present, or end of stream.
 
         // Remove any trailing newlines/carriage returns from status_line_from_fs
-        // (getline might include the newline character if not careful, depends on implementation)
         if (!status_line_from_fs.empty() && status_line_from_fs.back() == '\r') {
              status_line_from_fs.pop_back();
         }
@@ -202,7 +206,9 @@ int main(int argc, char* argv[]) {
 
         string full_response = full_response_ss.str();
 
-        cout << "Sending response (Total Bytes: " << full_response.length() << "):\n" << full_response << "END_RESPONSE_DELIMITER\n"; // For debugging
+        // For debugging server-side
+        cout << "Sending response (Total Bytes: " << full_response.length() << "):\n";
+        cout << full_response << "END_RESPONSE_DELIMITER\n"; // Delimiter for visual clarity only
 
         // Send the full response back to the client
         if (send_all(comm_sock, full_response.c_str(), full_response.length()) == -1) {

@@ -3,7 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm> // For std::min
-#include <cstring>   // For memset, bcopy
+#include <cstring>   // For memset, bcopy, strerror
 #include <cstdlib>   // For stoi (string to int), strtoul
 #include <stdexcept> // For std::invalid_argument, std::out_of_range
 #include <errno.h>   // For errno
@@ -207,6 +207,28 @@ void Shell::unmountNFS() {
     }
 }
 
+// Helper to display generic success/error messages based on assignment examples
+// This centralizes the logic for "OK" vs "success" and error codes.
+void display_rpc_result(int status_code, const string& status_message, const string& body_content) {
+    if (status_code == 200) {
+        // For simple success commands (mkdir, cd, home, rmdir, create, append, rm)
+        // Assignment examples show "success" for these.
+        // Server sends "OK" for these, so map "OK" to "success".
+        if (status_message == "OK") {
+            cout << "success" << endl;
+        } else {
+            // This else block is for commands like ls, cat, head, stat where body_content
+            // contains the actual output and needs to be printed directly.
+            // These cases are handled individually in their _rpc functions to print body_content.
+            // This block should ideally not be reached for 200 OK from ls, cat, head, stat.
+            cout << status_message << endl; // Fallback, but typically not used for 200 OK
+        }
+    } else { // Error status
+        // Error messages are printed directly as "Code Message"
+        cout << status_code << " " << status_message << endl;
+    }
+}
+
 // Remote procedure call on mkdir
 void Shell::mkdir_rpc(string dname) {
   if (!is_mounted) { cout << "Error: NFS not mounted." << endl; return; }
@@ -220,18 +242,12 @@ void Shell::mkdir_rpc(string dname) {
   // Receive and parse the server's response
   int status_code;
   string status_message;
-  string body_content;
+  string body_content; // mkdir typically has no body
 
   if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
       return; // Error message already printed by helper
   }
-
-  // Display the message
-  if (status_code == 200) {
-      cout << status_message << endl; // Success message is usually in status_message
-  } else {
-      cout << status_code << " " << status_message << endl;
-  }
+  display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procedure call on cd
@@ -256,13 +272,7 @@ void Shell::cd_rpc(string dname) {
     if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
         return; // Error message already printed by helper
     }
-
-    // 3. Display the message
-    if (status_code == 200) {
-        cout << status_message << endl; // For cd, success message is "OK"
-    } else {
-        cout << status_code << " " << status_message << endl;
-    }
+    display_rpc_result(status_code, status_message, body_content);
 }
 
 
@@ -285,13 +295,7 @@ void Shell::home_rpc() {
   if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
       return; // Error message already printed by helper
   }
-
-  // 3. Display the message
-  if (status_code == 200) {
-      cout << status_message << endl; // For home, success message is "OK"
-  } else {
-      cout << status_code << " " << status_message << endl;
-  }
+  display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procedure call on rmdir
@@ -316,13 +320,7 @@ void Shell::rmdir_rpc(string dname) {
     if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
         return; // Error message already printed by helper
     }
-
-    // 3. Display the message
-    if (status_code == 200) {
-        cout << status_message << endl; // Success message is "OK"
-    } else {
-        cout << status_code << " " << status_message << endl;
-    }
+    display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procedure call on ls
@@ -349,7 +347,7 @@ void Shell::ls_rpc() {
         return;
     }
 
-    // 3. Display the message
+    // 3. Display the message - Special handling for ls: print body_content directly on success
     if (status_code == 200) { // OK status
         cout << body_content << endl; // Print the message body (directory contents)
     } else { // Error status
@@ -376,13 +374,7 @@ void Shell::create_rpc(string fname) {
   if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
       return; // Error message already printed by helper
   }
-
-  // 3. Display the message
-  if (status_code == 200) {
-      cout << status_message << endl; // Success message is "OK"
-  } else {
-      cout << status_code << " " << status_message << endl;
-  }
+  display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procedure call on append
@@ -403,13 +395,7 @@ void Shell::append_rpc(string fname, string data) {
   if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
       return; // Error message already printed by helper
   }
-
-  // Display the message
-  if (status_code == 200) {
-      cout << status_message << endl; // Success message is "OK"
-  } else {
-      cout << status_code << " " << status_message << endl;
-  }
+  display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procesure call on cat
@@ -431,7 +417,7 @@ void Shell::cat_rpc(string fname) {
       return; // Error message already printed by helper
   }
 
-  // Display the message
+  // Display the message - Special handling for cat: print body_content directly on success
   if (status_code == 200) {
       cout << body_content; // cat body includes trailing newline, so no endl here
   } else {
@@ -458,7 +444,7 @@ void Shell::head_rpc(string fname, int n) { // Note: 'n' is int here, but unsign
       return; // Error message already printed by helper
   }
 
-  // Display the message
+  // Display the message - Special handling for head: print body_content directly on success
   if (status_code == 200) {
       cout << body_content; // head body includes trailing newline, so no endl here
   } else {
@@ -488,13 +474,7 @@ void Shell::rm_rpc(string fname) {
     if (!receive_and_parse_response(cs_sock, status_code, status_message, body_content)) {
         return; // Error message already printed by helper
     }
-
-    // 3. Display the message
-    if (status_code == 200) {
-        cout << status_message << endl; // Success message is "OK"
-    } else {
-        cout << status_code << " " << status_message << endl;
-    }
+    display_rpc_result(status_code, status_message, body_content);
 }
 
 // Remote procedure call on stat
@@ -520,7 +500,7 @@ void Shell::stat_rpc(string fname) {
         return; // Error message already printed by helper
     }
 
-    // 3. Display the message
+    // 3. Display the message - Special handling for stat: print body_content directly on success
     if (status_code == 200) {
         cout << body_content << endl; // stat output is the body, needs a final endl
     } else {
